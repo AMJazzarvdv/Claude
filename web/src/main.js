@@ -13,7 +13,7 @@ import { World, HALF } from './world.js';
 import { AudioEngine } from './audio.js';
 import { Bell, Pallet, Post, Gate, Hatch, Survivor, V, angDiff, yawTo, flatDist } from './entities.js';
 import { Killer, Sentinel, Memorial, TIER_NAMES } from './killer.js';
-import { Chest, HolyFlask, Votive, ITEMS, ITEM_ICONS, buildItemModel } from './items.js';
+import { Chest, HolyFlask, Votive, ITEMS, ITEM_ICONS, HOLD, buildItemModel } from './items.js';
 import { Crows } from './crows.js';
 import { Weather } from './weather.js';
 import { FX } from './fx.js';
@@ -411,6 +411,7 @@ class Game {
     const j = s.model.userData.j, hand = j.handR || j.elR;
     const m = buildItemModel(s.item, this.M);
     if (!j.handR) m.position.set(0, -0.27, 0.04);
+    else if (HOLD[s.item]) m.quaternion.setFromRotationMatrix(HOLD[s.item]);
     m.traverse((o) => { if (o.isMesh) o.castShadow = true; });
     hand.add(m); s.heldModel = m;
   }

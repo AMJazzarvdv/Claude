@@ -495,7 +495,7 @@ export class Survivor {
         if (!o.isMesh || !o.material) return;
         if (!own.has(o.material)) {
           const c = o.material.clone();
-          own.set(o.material, { m: c, color: c.color ? c.color.clone() : null, rough: c.roughness, metal: c.metalness, emissive: c.emissive ? c.emissive.clone() : null, y: 0, n: 0 });
+          own.set(o.material, { m: c, color: c.color ? c.color.clone() : null, rough: c.roughness, metal: c.metalness, emissive: c.emissive ? c.emissive.clone() : null, cc: c.clearcoat, y: 0, n: 0 });
         }
         const e = own.get(o.material);
         o.getWorldPosition(wp); e.y += wp.y - this.model.position.y; e.n++;
@@ -512,6 +512,7 @@ export class Survivor {
       if (e.rough !== undefined) e.m.roughness = e.rough + (0.95 - e.rough) * lf;
       if (e.metal !== undefined) e.m.metalness = e.metal * (1 - lf);
       if (e.emissive) e.m.emissive.copy(e.emissive).multiplyScalar(1 - lf);
+      if (e.cc !== undefined) e.m.clearcoat = e.cc * (1 - lf);
     }
     this.stone = f;
   }

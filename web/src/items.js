@@ -32,6 +32,15 @@ function prop(name, M, ...args) {
   return g;
 }
 
+// How each item sits in a survivor's right hand. Hand frame: origin at the
+// centre of the curled grip, +z along the grip, fingers toward -y, palm +x.
+// The mirror and the flask are built upright (+y) facing +z.
+const basis = (x, y, z) => new THREE.Matrix4().makeBasis(new THREE.Vector3(...x), new THREE.Vector3(...y), new THREE.Vector3(...z));
+export const HOLD = {
+  mirror: basis([0, 1, 0], [0, 0, 1], [1, 0, 0]), // handle along the grip, glass toward the palm
+  holy: basis([0, 1, 0], [0, 0, 1], [1, 0, 0]),
+};
+
 export function buildItemModel(id, M) {
   return prop({ mirror: 'buildHandMirror', candle: 'buildVotiveCandle', holy: 'buildHolyWater', bandage: 'buildBandage' }[id], M);
 }
