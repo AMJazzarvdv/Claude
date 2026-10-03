@@ -6,3 +6,4 @@ DerivedDataCache/
 *.sln
 web/node_modules/
 web/dist/_*
+web/preview/
