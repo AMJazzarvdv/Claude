@@ -1014,7 +1014,7 @@ function makeMats(def, st, M) {
     mats.bead = new THREE.MeshStandardMaterial({ color: 0x2a1a10, roughness: 0.32 });
     mats.metal.color.set(0xb09468);
   } else if (id === 'juno') {
-    mats.top = new THREE.MeshPhysicalMaterial({ color: def.jacket, map: kit.oil.map, normalMap: kit.oil.normalMap, normalScale: new THREE.Vector2(0.45, 0.45), roughness: 0.34, clearcoat: 0.45, clearcoatRoughness: 0.32, side: THREE.DoubleSide });
+    mats.top = new THREE.MeshPhysicalMaterial({ color: def.jacket, map: kit.oil.map, normalMap: kit.oil.normalMap, normalScale: new THREE.Vector2(0.45, 0.45), roughness: 0.42, clearcoat: 0.28, clearcoatRoughness: 0.48, side: THREE.DoubleSide }); // glossy but never blown out at grazing moonlight (prone back, collar edges)
     mats.button = new THREE.MeshStandardMaterial({ color: def.accent ?? 0x5e3c20, roughness: 0.4 });
   } else if (id === 'tey') {
     mats.hat = cloth(def.hat ?? 0x8a1e1a, { roughness: 1 });
@@ -1385,7 +1385,7 @@ export function animateSurvivor(rig, anim, t, dt, o = NOOPT) {
       // flexed back enough to lie along the ground instead of sloping into it
       T.shL[0] = -2.72 + s(p) * 0.38; T.shR[0] = -2.72 - s(p) * 0.38; T.elL[0] = -0.4; T.elR[0] = -0.4;
       T.shL[2] = 0.18; T.shR[2] = -0.18;
-      T.hipL[0] = 0.3 + s(p) * 0.15; T.hipR[0] = 0.3 - s(p) * 0.15; T.knL[0] = 0.45; T.knR[0] = 0.65;
+      T.hipL[0] = 0.3 + s(p) * 0.15; T.hipR[0] = 0.3 - s(p) * 0.15; T.knL[0] = 0.3; T.knR[0] = 0.45;
       T.spine[1] = s(p) * 0.08;
       break;
     }
