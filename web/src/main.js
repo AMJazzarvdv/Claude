@@ -60,6 +60,18 @@ scene.fog = new THREE.FogExp2(FOG, 0.03);
 scene.background = new THREE.Color(FOG);
 const camera = new THREE.PerspectiveCamera(64, innerWidth / innerHeight, 0.05, 900);
 const mirrorCam = new THREE.PerspectiveCamera(50, 1.6, 0.1, 400);
+// The mirror's view renders to a texture that is drawn, flipped like a real
+// mirror, onto an oval over the HUD.
+const mirrorRT = new THREE.WebGLRenderTarget(16, 16, { type: THREE.HalfFloatType });
+mirrorRT.texture.repeat.set(-1, 1); mirrorRT.texture.offset.set(1, 0);
+const mirrorOverlay = new THREE.Scene(), mirrorOrtho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+{
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const x = c.getContext('2d'), g = x.createRadialGradient(64, 64, 58, 64, 64, 63.5);
+  g.addColorStop(0, '#fff'); g.addColorStop(1, '#000');
+  x.fillStyle = '#000'; x.fillRect(0, 0, 128, 128); x.fillStyle = g; x.beginPath(); x.arc(64, 64, 64, 0, Math.PI * 2); x.fill();
+  mirrorOverlay.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.MeshBasicMaterial({ map: mirrorRT.texture, alphaMap: new THREE.CanvasTexture(c), transparent: true, depthTest: false, depthWrite: false, fog: false })));
+}
 
 const hemi = new THREE.HemisphereLight(0x8496b8, 0x2a2218, 2.0);
 scene.add(hemi);
@@ -1104,12 +1116,16 @@ function renderMirror() {
   const x = Math.round((innerWidth - w) / 2), y = 190;
   mirrorCam.aspect = w / h; mirrorCam.updateProjectionMatrix();
   frameEl.style.width = w + 'px'; frameEl.style.height = h + 'px'; frameEl.style.bottom = y + 'px';
-  const auto = renderer.shadowMap.autoUpdate;
+  const pr = renderer.getPixelRatio(), rw = Math.round(w * pr), rh = Math.round(h * pr);
+  if (mirrorRT.width !== rw || mirrorRT.height !== rh) mirrorRT.setSize(rw, rh);
+  const auto = renderer.shadowMap.autoUpdate, clear = renderer.autoClear;
   renderer.shadowMap.autoUpdate = false;
+  renderer.setRenderTarget(mirrorRT); renderer.render(scene, mirrorCam); renderer.setRenderTarget(null);
+  renderer.autoClear = false;
   renderer.setScissorTest(true); renderer.setScissor(x, y, w, h); renderer.setViewport(x, y, w, h);
-  renderer.render(scene, mirrorCam);
+  renderer.render(mirrorOverlay, mirrorOrtho);
   renderer.setScissorTest(false); renderer.setViewport(0, 0, innerWidth, innerHeight);
-  renderer.shadowMap.autoUpdate = auto;
+  renderer.autoClear = clear; renderer.shadowMap.autoUpdate = auto;
 }
 
 try { if (matchMedia('(pointer: coarse)').matches && !matchMedia('(pointer: fine)').matches) $('touchNote').hidden = false; } catch { /* ignore */ }
