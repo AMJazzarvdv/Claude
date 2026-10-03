@@ -255,8 +255,10 @@ export class Killer {
         this.toll = null; this.tollCD = this.tier >= 3 ? 30 : 40;
         G.tollOfStone(this);
         this.releaseT = Math.max(this.releaseT, 1.0); this.frozenT = 0;
+        this.tolledT = 1.4; // while every eye is shut it throws its arms wide
       }
     }
+    this.tolledT = Math.max(0, (this.tolledT || 0) - dt);
     // the afterimage appears once the player's eyes reopen
     if (this.ghostPending && !G.player.blinking) {
       this.ghostPending = false;
@@ -558,6 +560,9 @@ export class Killer {
       p = list[this.variant % list.length];
     } else if (this.state === 'search' || this.state === 'investigate') p = POSES.search[this.variant % POSES.search.length];
     else p = POSES.patrol[this.variant % POSES.patrol.length];
+    // ascended flourishes (only ever chosen while unwatched, like every pose change)
+    if (!a && this.tolledT > 0) p = 'toll';
+    else if (!a && !this.carrying && this.tier >= 3 && this.state !== 'chase' && this.variant % 3 === 0) p = 'judgement';
     if (!RELIQUARY_POSES[p]) p = 'claw';
     if (p !== this.poseName) { this.poseName = p; poseReliquary(this.model, p); }
     // its head always turns to the nearest survivor: whenever you look back, it is staring at you
@@ -572,7 +577,9 @@ export class Killer {
     this.cloth.position.copy(this.pos);
     const pulse = 0.6 + Math.sin(G.time * (this.lament ? 9 : 2.2)) * 0.25;
     const k = Math.min(1, dt * 3);
-    const glowWant = this.tier >= 2 ? (this.toll ? 1 : this.moving ? 0.85 : 0.2) : 0;
+    // ascended stone smoulders even while held, breathing slowly; it flares when it moves or tolls
+    const ember = (this.tier >= 3 ? 0.5 : 0.3) * (0.8 + 0.2 * Math.sin(G.time * 1.7));
+    const glowWant = this.tier >= 2 ? (this.toll ? 1 : this.moving ? 0.85 : ember) : 0;
     this.glow += (glowWant - this.glow) * k;
     // wings only move while unseen (it is stone when watched)
     if (!this.petrified) this.wings += ((this.tier >= 3 ? (this.moving || this.action ? 1 : 0.45) : 0) - this.wings) * Math.min(1, dt * 4);
