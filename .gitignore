@@ -4,5 +4,5 @@ Saved/
 DerivedDataCache/
 .vs/
 *.sln
-web/node_modules/
+web/node_modules
 web/dist/_*
