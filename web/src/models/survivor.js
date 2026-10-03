@@ -883,14 +883,18 @@ function makeSkirt(parts) {
 // Skirt: every vertex rotates about the hip axis. The front follows the most
 // forward nearby thigh, the back the most backward one, the sides their own
 // leg; below the knee line the cloth bends again by the knee angle.
-function deformSkirt(S, j, body) {
+// ground: the rig stands on the ground (not hooked / carried); a tilted (prone)
+// body then gets its cloth projected onto the ground plane instead of sinking.
+function deformSkirt(S, j, body, ground) {
   const hL = j.hipL.rotation.x, hR = j.hipR.rotation.x, kL = j.knL.rotation.x, kR = j.knR.rotation.x;
   const by = body.position.y, bx = body.rotation.x;
-  const sig = hL * 1.3 + hR * 2.1 + kL * 3.7 + kR * 5.3 + by * 7.1 + bx * 11.3;
+  const sig = hL * 1.3 + hR * 2.1 + kL * 3.7 + kR * 5.3 + by * 7.1 + bx * 11.3 + (ground ? 13.7 : 0);
   if (Math.abs(sig - S.sig) < 1e-5) return;
   S.sig = sig;
   const fL = fol(hL), fR = fol(hR);
   const clampGround = Math.abs(bx) < 0.4, yMin = 0.02 - 0.95 - by;
+  // prone: hip-space vertex -> world height = by + (0.95 + y) cos(bx) - z sin(bx)
+  const clampTilt = ground && !clampGround, cbx = Math.cos(bx), sbx = Math.sin(bx);
   for (let pi = 0; pi < S.parts.length; pi++) {
     const p = S.parts[pi];
     const R = p.rest, RN = p.restN, w = p.w, P = p.g.attributes.position.array, N = p.g.attributes.normal.array, n = R.length / 3;
@@ -921,8 +925,11 @@ function deformSkirt(S, j, body) {
       }
       let nx = x;
       if (clampGround && ny < yMin) {
-        const ex = yMin - ny, r = Math.hypot(nx, nz) || 1, f = 1 + ex * 1.6 / r;
+        const ex = yMin - ny, r = Math.sqrt(nx * nx + nz * nz) || 1, f = 1 + ex * 1.6 / r; // sqrt, not hypot: hypot boxes its args (allocates)
         nx *= f; nz *= f; ny = yMin;
+      } else if (clampTilt) {
+        const ex = 0.015 - (by + (0.95 + ny) * cbx - nz * sbx);
+        if (ex > 0) { ny += ex * cbx; nz -= ex * sbx; } // push straight up (world) onto the ground
       }
       P[q] = nx; P[q + 1] = ny; P[q + 2] = nz;
       N[q] = RN[q]; N[q + 1] = nny; N[q + 2] = nnz;
@@ -1374,9 +1381,11 @@ export function animateSurvivor(rig, anim, t, dt, o = NOOPT) {
       // lie prone on the ground, centred on the survivor's position
       bodyRX = 1.35; bodyY = -0.09; bodyZ = -0.9;
       T.head[0] = -1.0; T.neck[0] = -0.2;
-      T.shL[0] = -2.6 + s(p) * 0.5; T.shR[0] = -2.6 - s(p) * 0.5; T.elL[0] = -0.4; T.elR[0] = -0.4;
+      // arms claw forward (the pulling hand stays on the ground, not in it); thighs are
+      // flexed back enough to lie along the ground instead of sloping into it
+      T.shL[0] = -2.72 + s(p) * 0.38; T.shR[0] = -2.72 - s(p) * 0.38; T.elL[0] = -0.4; T.elR[0] = -0.4;
       T.shL[2] = 0.18; T.shR[2] = -0.18;
-      T.hipL[0] = 0.1 + s(p) * 0.2; T.hipR[0] = 0.1 - s(p) * 0.2; T.knL[0] = 0.4; T.knR[0] = 0.6;
+      T.hipL[0] = 0.3 + s(p) * 0.15; T.hipR[0] = 0.3 - s(p) * 0.15; T.knL[0] = 0.45; T.knR[0] = 0.65;
       T.spine[1] = s(p) * 0.08;
       break;
     }
@@ -1480,10 +1489,11 @@ export function animateSurvivor(rig, anim, t, dt, o = NOOPT) {
   // ---- secondary motion
   const sec = rig.userData.sec;
   if (sec) {
-    if (sec.skirt) deformSkirt(sec.skirt, j, body);
+    if (sec.skirt) deformSkirt(sec.skirt, j, body, anim !== 'carried' && anim !== 'hooked');
     if (sec.cape) deformCape(sec.cape, j);
     if (sec.tails) {
-      const lean = clamp(j.spine.rotation.x + body.rotation.x, 0, 1.45);
+      // prone on the ground the tails lie flat along the chest instead of hanging into the ground
+      const lean = anim === 'crawl' ? 0 : clamp(j.spine.rotation.x + body.rotation.x, 0, 1.45);
       const sway = anim === 'run' ? s(t * 9.5) * 0.12 : anim === 'walk' ? s(t * 7.2) * 0.05 : 0;
       const tr = sec.tails.rotation;
       tr.x += (-lean * 0.9 - Math.abs(sway) * 0.5 - (anim === 'run' ? 0.25 : 0) - tr.x) * k;
