@@ -828,5 +828,5 @@ export class Survivor {
 export function copyPose(src, dst) {
   const a = [], b = [];
   src.traverse((o) => a.push(o)); dst.traverse((o) => b.push(o));
-  for (let i = 0; i < a.length && i < b.length; i++) { b[i].position.copy(a[i].position); b[i].rotation.copy(a[i].rotation); b[i].scale.copy(a[i].scale); b[i].visible = a[i].visible; }
+  for (let i = 0; i < a.length && i < b.length; i++) { b[i].position.copy(a[i].position); b[i].rotation.copy(a[i].rotation); b[i].visible = a[i].visible; }
 }
