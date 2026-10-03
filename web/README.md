@@ -7,8 +7,8 @@ Everything is made from scratch in code. Nothing is downloaded at runtime except
 | Asset | How it is made |
 |---|---|
 | **Textures** | Per-pixel procedural PBR (albedo, normal and roughness/metalness) for peat, mossy stone, weathered planks, bronze, iron, bark, cloth, statue stone and the weeping mask (`src/textures.js`) |
-| **Models** | Jointed survivor rigs, the Reliquary (lathe-carved robe, peaked cowl, broken halo, spindly fingers), bells, pallets, Weeping Posts, lychgates, recursive dead trees, rocks, gravestones and grass tufts (`src/models.js`) |
-| **Animation** | Procedural walk, run, crouch, crawl, ring, heal, vault, hang, carry and struggle poses. The Reliquary only changes pose while nobody is watching it |
+| **Models** | Sculpted survivors built from lofted profiles, tubes and sculpted sphere grids: faces with brows, lids and lips, jointed fingers, layered period costumes, and long coats, a cassock and a cape whose cloth is deformed on the CPU every frame. The Reliquary: an open outer mantle over a pleated tunic, a torn hem with bare stone feet, a rope cincture with tassels and a broken shackle, an embroidered stole, a gothic bronze relic box with a window, two-knuckle fingers, a re-sculpted weeping mask, and three tier variants (a cracked crescent halo; a reformed rayed halo with ember cracks; broken stone wings with hovering shards). Plus bells, pallets, Weeping Posts, lychgates, chests, crows, items, decor, recursive dead trees, rocks, gravestones and grass tufts (`src/models/`) |
+| **Animation** | Procedural walk, run, crouch, crawl, ring, heal, vault, hang, carry, struggle, mirror-hold, throw and petrify poses. The Reliquary only changes pose (and turns its head) while nobody is watching it |
 | **Audio** | All synthesized with Web Audio: additive bell tolls, formant screams, filtered-noise wind, grinding stone, pallet slams, chains, peat gurgles, crows and the chase score (`src/audio.js`) |
 | **World** | Seeded procedural parish: a ruined church, a graveyard, ruins, shacks, peat stacks, 7 bells, 6 posts, 2 gates and 13+ pallets. It changes every match (`src/world.js`) |
 | **Rendering** | three.js with PCF soft shadows, exponential fog, a shader sky with the moon and clouds, layered ground mist, bloom, and a grading pass for vignette, grain, chromatic aberration and eyelid blinks |
@@ -29,7 +29,7 @@ Ring 5 of 7 Mourning Bells (watch for toll checks), open a Lychgate, and walk ou
 |---|---|---|
 | **Penitent** | start | the base statue |
 | **Martyr** | 2 bells or 2 bindings (difficulty dependent) | halo reforms, cracks glow; unlocks the **Toll of Stone**: held under a gaze for 3 s its halo burns (choir rises, "LOOK AWAY"), and if anyone is still watching after 1.8 s every survivor in sight is forced to blink while it lunges |
-| **Saint Unbound** | 4 bells, a death, or 5 bindings | stone wings, faster, Laments after 4 s |
+| **Saint Unbound** | 4 bells, a death, or 5 bindings | broken stone wings unfold, shards circle the halo, the relic blazes; faster, Laments after 4 s |
 
 Its head always turns toward the nearest survivor while unseen, it leaves cracked footprints where it walked, it whispers when it is close, and if it moved while your eyes were shut a pale afterimage shows where it stood. A survivor already bound twice is **canonized** instead of carried: turned to stone where they lie (watching it pauses the stone; reviving them in time saves them), and their statue becomes another body the Reliquary can step out of.
 
