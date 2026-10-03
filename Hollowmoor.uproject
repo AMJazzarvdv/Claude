@@ -1,0 +1,13 @@
+{
+	"FileVersion": 3,
+	"EngineAssociation": "5.4",
+	"Category": "",
+	"Description": "Hollowmoor - 1v4 asymmetric horror",
+	"Modules": [
+		{ "Name": "Hollowmoor", "Type": "Runtime", "LoadingPhase": "Default", "AdditionalDependencies": ["Engine", "EnhancedInput", "GameplayTags"] }
+	],
+	"Plugins": [
+		{ "Name": "EnhancedInput", "Enabled": true },
+		{ "Name": "OnlineSubsystemSteam", "Enabled": false }
+	]
+}
