@@ -3,6 +3,7 @@
 // noise, wind is modulated noise, etc. Positional sounds use HRTF panners.
 
 const rand = (a, b) => a + Math.random() * (b - a);
+const clampN = (v, a, b) => (v < a ? a : v > b ? b : v);
 
 export class AudioEngine {
   constructor() { this.ctx = null; this.enabled = false; this.volume = 0.8; }
@@ -313,6 +314,152 @@ export class AudioEngine {
     }
   }
 
+  // A wordless choir: detuned sawtooth voices through "ah" formants.
+  // rise > 0 bends the chord upward over the duration (Toll of Stone charge).
+  choir(pos, dur = 3, vol = 0.4, rise = 0, root = 110) {
+    if (!this.enabled) return;
+    const t = this.now, dest = this._dest(pos, 0.9, 6, 0.6);
+    const bus = this.ctx.createGain(); bus.gain.setValueAtTime(0.0001, t);
+    bus.gain.exponentialRampToValueAtTime(vol, t + Math.min(0.9, dur * 0.45));
+    bus.gain.setValueAtTime(vol, t + dur * 0.8); bus.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.6);
+    for (const [f, q, a] of [[800, 6, 1], [1150, 7, 0.6], [2900, 9, 0.25]]) {
+      const bp = this.ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = f; bp.Q.value = q;
+      const g = this.ctx.createGain(); g.gain.value = a * 1.6; bp.connect(g).connect(dest);
+      bus.connect(bp);
+    }
+    for (const r of [1, 1.189, 1.498, 2, 1.414, 0.5]) {
+      for (const det of [-0.004, 0.004]) {
+        const o = this.ctx.createOscillator(); o.type = 'sawtooth';
+        const f0 = root * r * (1 + det);
+        o.frequency.setValueAtTime(f0, t);
+        if (rise) o.frequency.exponentialRampToValueAtTime(f0 * (1 + rise), t + dur);
+        const vib = this.ctx.createOscillator(); vib.frequency.value = 4.5 + Math.random() * 1.5;
+        const vg = this.ctx.createGain(); vg.gain.value = f0 * 0.006; vib.connect(vg).connect(o.frequency);
+        const g = this.ctx.createGain(); g.gain.value = r === 0.5 ? 0.5 : 0.22;
+        o.connect(g).connect(bus);
+        o.start(t); vib.start(t); o.stop(t + dur + 0.8); vib.stop(t + dur + 0.8);
+      }
+    }
+  }
+
+  ascend(pos) { if (!this.enabled) return; this.choir(pos, 4.5, 0.55, 0, 98); this.toll(pos, 73, 0.9, 9); this.boom(pos, 40, 0.7); }
+
+  tollCharge(pos, dur) {
+    if (!this.enabled) return;
+    this.choir(pos, dur, 0.5, 0.06, 116.5);
+    const t = this.now, dest = this._dest(pos, 0.6, 5, 0.7);
+    this._noise(t, dur, dest, { f: 300, fEnd: 2400, q: 2, gain: 0.35, a: dur * 0.8, buf: this.brown });
+  }
+
+  tollRelease(pos) {
+    if (!this.enabled) return;
+    this.toll(pos, 61.7, 1.0, 7); this.toll(pos, 87.3, 0.6, 6); this.crack(pos); this.boom(pos, 36, 1.1);
+  }
+
+  fizzle(pos) {
+    if (!this.enabled) return;
+    const t = this.now, dest = this._dest(pos, 0.3, 4, 0.8);
+    this._noise(t, 0.6, dest, { f: 1800, fEnd: 300, q: 1.5, gain: 0.25, a: 0.02 });
+  }
+
+  shatter(pos) {
+    if (!this.enabled) return;
+    for (let k = 0; k < 9; k++) {
+      const t = this.now + k * rand(0.02, 0.07), dest = this._dest(pos, 0.5, 5, 0.8);
+      this._noise(t, rand(0.05, 0.2), dest, { f: rand(700, 3500), q: 1.4, gain: 0.6 });
+      this._osc('triangle', rand(180, 900), t, 0.15, dest, 0.18);
+    }
+    this.boom(pos, 55, 0.6);
+  }
+
+  splash(pos) {
+    if (!this.enabled) return;
+    const t = this.now, dest = this._dest(pos, 0.4, 4, 0.8);
+    for (const f of [3100, 4200, 5600]) this._osc('sine', f * rand(0.9, 1.1), t, 0.25, dest, 0.08);
+    this._noise(t, 0.35, dest, { f: 2500, q: 0.8, gain: 0.45, fEnd: 900 });
+    this.gurgle(pos, 6, 0.4);
+  }
+
+  thunder(dist = 400) {
+    if (!this.enabled) return;
+    const t = this.now + Math.min(3, dist / 340), d = this._dest(null, 0.9);
+    const near = clampN(1 - dist / 900, 0.25, 1);
+    this._noise(t, 0.25, d, { type: 'lowpass', f: 3000, fEnd: 400, gain: 0.5 * near, buf: this.white });
+    this._noise(t + 0.05, 3.8, d, { type: 'lowpass', f: 260, fEnd: 70, gain: 1.0 * near, a: 0.15, buf: this.brown });
+    this._noise(t + 0.6, 2.6, d, { type: 'lowpass', f: 160, gain: 0.6 * near, a: 0.4, buf: this.brown });
+  }
+
+  cawAt(pos) {
+    if (!this.enabled) return;
+    for (let k = 0; k < 2; k++) {
+      const t = this.now + k * rand(0.15, 0.3), dest = this._dest(pos, 0.5, 4, 0.8);
+      const o = this.ctx.createOscillator(); o.type = 'sawtooth';
+      o.frequency.setValueAtTime(rand(720, 920), t); o.frequency.exponentialRampToValueAtTime(rand(420, 520), t + 0.22);
+      const bp = this.ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 1150; bp.Q.value = 3;
+      const g = this.ctx.createGain(); this._env(g.gain, t, 0.02, 0.22, 0.22);
+      o.connect(bp).connect(g).connect(dest); o.start(t); o.stop(t + 0.3);
+    }
+    this.flap(pos);
+  }
+
+  flap(pos) {
+    if (!this.enabled) return;
+    for (let k = 0; k < 7; k++) {
+      const t = this.now + k * 0.07, dest = this._dest(pos, 0.1, 3, 1);
+      this._noise(t, 0.05, dest, { f: rand(500, 900), q: 0.7, gain: 0.16 });
+    }
+  }
+
+  chestCreak(pos) { if (!this.enabled) return; this.creak(pos, 0.5); }
+  chestOpen(pos) {
+    if (!this.enabled) return;
+    const t = this.now, dest = this._dest(pos, 0.3, 3, 1);
+    this.creak(pos, 0.6);
+    this._noise(t + 0.3, 0.06, dest, { type: 'lowpass', f: 400, gain: 0.5, buf: this.brown });
+    for (const f of [660, 990, 1320]) this._osc('sine', f, t + 0.35, 0.8, dest, 0.06);
+  }
+
+  itemUse() { if (!this.enabled) return; const t = this.now, d = this._dest(null, 0.3); for (const f of [523, 784]) this._osc('sine', f, t, 0.4, d, 0.07); }
+
+  // Positional whispering near the statue: formant-filtered noise "syllables".
+  whisper(id, pos, intensity) {
+    if (!this.enabled) return;
+    this.whispers = this.whispers || new Map();
+    let w = this.whispers.get(id);
+    if (!w) {
+      const p = this._panner(pos, 2, 1.6);
+      const s = this.ctx.createBufferSource(); s.buffer = this.pink; s.loop = true;
+      const gain = this.ctx.createGain(); gain.gain.value = 0;
+      const fs = [700, 1200, 2600].map((f) => { const bp = this.ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = f; bp.Q.value = 9; s.connect(bp); bp.connect(gain); return bp; });
+      gain.connect(p).connect(this.sfx);
+      const send = this.ctx.createGain(); send.gain.value = 0.4; p.connect(send); send.connect(this.reverbIn);
+      s.start();
+      w = { p, gain, fs, next: 0 };
+      this.whispers.set(id, w);
+    }
+    const t = this.now;
+    if (w.p.positionX) { w.p.positionX.setTargetAtTime(pos.x, t, 0.05); w.p.positionY.setTargetAtTime(pos.y, t, 0.05); w.p.positionZ.setTargetAtTime(pos.z, t, 0.05); }
+    if (t > w.next) {
+      w.next = t + rand(0.08, 0.2);
+      const vowel = [[700, 1200], [400, 2000], [300, 900], [600, 1700], [250, 2300]][Math.floor(Math.random() * 5)];
+      w.fs[0].frequency.setTargetAtTime(vowel[0] * rand(0.9, 1.1), t, 0.02);
+      w.fs[1].frequency.setTargetAtTime(vowel[1] * rand(0.9, 1.1), t, 0.02);
+      const on = Math.random() < 0.7 ? 1 : 0.1;
+      w.gain.gain.setTargetAtTime(intensity * on * 0.5, t, 0.03);
+    }
+    if (intensity <= 0) w.gain.gain.setTargetAtTime(0, t, 0.05);
+  }
+
+  rain(level) {
+    if (!this.enabled) return;
+    if (!this.rainLoop) {
+      this.rainLoop = this._loopNoise(this.white, 'highpass', 1400, 0.5, 0, this.ambBus);
+      const lp = this.ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 7000;
+      this.rainLoop.fl.disconnect(); this.rainLoop.fl.connect(lp); lp.connect(this.rainLoop.g);
+    }
+    this.rainLoop.g.gain.setTargetAtTime(level * 0.09, this.now, 0.8);
+  }
+
   // ------------------------------------------------------------- loops
   _loopNoise(buf, filterType, f, q, gain, dest) {
     const s = this.ctx.createBufferSource(); s.buffer = buf; s.loop = true;
@@ -411,5 +558,9 @@ export class AudioEngine {
     if (this.crowT < 0) { this.crowT = rand(18, 45); this.crow(); }
   }
 
-  silenceGrind(id) { if (!this.grinds) return; const g = this.grinds.get(id); if (g) g.gain.gain.setTargetAtTime(0, this.now, 0.05); }
+  silenceGrind(id) {
+    if (!this.grinds) return;
+    const g = this.grinds.get(id); if (g) g.gain.gain.setTargetAtTime(0, this.now, 0.05);
+    const w = this.whispers?.get(id); if (w) w.gain.gain.setTargetAtTime(0, this.now, 0.05);
+  }
 }

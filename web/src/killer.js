@@ -2,8 +2,19 @@
 // It is stone while any survivor has it on screen with clear line of sight.
 // Unwatched, it is fast and silent but for the grinding of stone.
 import * as THREE from 'three';
-import { buildReliquary, poseReliquary, auraClone, buildShroud } from './models.js';
+import { buildReliquary, poseReliquary, auraClone, buildShroud, RELIQUARY_POSES } from './models.js';
+import * as RM from './models/reliquary.js';
 import { V, angDiff, yawTo, flatDist, copyPose } from './entities.js';
+import { clamp } from './noise.js';
+
+// Model hooks for tiers / glow / head-turn (optional until the upgraded model lands).
+const setTier = (m, t) => RM.setReliquaryTier?.(m, t);
+const setLook = (m, y, p) => RM.setReliquaryLook?.(m, y, p);
+const fxUpdate = (m, fx) => RM.updateReliquaryFX?.(m, fx);
+const hasFX = () => typeof RM.updateReliquaryFX === 'function';
+const pose = (m, name, fallback = 'claw') => poseReliquary(m, RELIQUARY_POSES[name] ? name : fallback);
+
+export const TIER_NAMES = ['', 'Penitent', 'Martyr', 'Saint Unbound'];
 
 const POSES = {
   chaseNear: ['lunge', 'claw', 'reach'],
@@ -18,24 +29,64 @@ export class Sentinel {
     this.G = G; this.id = SENT_ID++;
     this.pos = pos.clone(); this.pos.y = 0; this.yaw = yaw; this.pose = pose;
     this.model = buildReliquary(G.M, { alive: false });
+    setTier(this.model, G.killer ? G.killer.tier : 1);
     this.cloth = buildShroud(G.M); this.cloth.visible = false;
     G.world.root.add(this.model); G.world.root.add(this.cloth);
     this.circle = { x: 0, z: 0, r: 0.45 };
-    this.shroud = 0;
+    this.shroud = 0; this.lookT = Math.random() * 0.25; this.fx = { time: 0, glow: 0, relic: 0, wings: 0.4, halo: 0 };
     this.moveTo(this.pos, yaw, pose);
   }
   moveTo(p, yaw, pose) {
-    this.pos.set(p.x, 0, p.z); this.yaw = yaw; this.pose = pose;
+    this.pos.set(p.x, 0, p.z); this.yaw = yaw; this.pose = RELIQUARY_POSES[pose] ? pose : 'pray';
     this.model.position.copy(this.pos); this.model.rotation.y = yaw;
-    poseReliquary(this.model, pose);
+    poseReliquary(this.model, this.pose);
     this.cloth.position.copy(this.pos);
     this.circle.x = p.x; this.circle.z = p.z;
   }
   setShroud(t) { this.shroud = t; this.cloth.visible = true; this.G.audio.vault(this.pos.clone().setY(1.5), false); }
   update(dt) {
+    const G = this.G;
     if (this.shroud > 0) { this.shroud -= dt; if (this.shroud <= 0) this.cloth.visible = false; }
+    // the decoys turn their heads toward you too, but only while nobody is looking
+    this.lookT -= dt;
+    if (this.lookT <= 0 && this.shroud <= 0) {
+      this.lookT = 0.25;
+      if (!G.isWatched(this.samplePoints())) {
+        const s = nearestSurvivor(G, this.pos, 12);
+        if (s) setLook(this.model, angDiff(this.yaw, yawTo(this.pos, s.pos)), Math.atan2(s.eye().y - 2.3, Math.max(0.5, flatDist(s.pos, this.pos))));
+        else setLook(this.model, 0, 0);
+      }
+    }
+    if (hasFX() && G.killer) { this.fx.time = G.time; this.fx.wings = G.killer.tier >= 3 ? 0.4 : 0; fxUpdate(this.model, this.fx); }
   }
   samplePoints() { return [V(this.pos.x, 1.95, this.pos.z), V(this.pos.x, 1.1, this.pos.z)]; }
+}
+
+function nearestSurvivor(G, pos, maxD) {
+  let best = null, bd = maxD;
+  for (const s of G.survivors) {
+    if (!s.alive || s.health === 'carried') continue;
+    const d = flatDist(s.pos, pos);
+    if (d < bd) { bd = d; best = s; }
+  }
+  return best;
+}
+
+// A survivor the Reliquary turned to stone. It stands where they fell and the
+// Reliquary can step out of it as if it were one of its own Sentinels.
+export class Memorial {
+  constructor(G, s) {
+    this.G = G; this.survivor = s; this.model = s.model; this.isMemorial = true;
+    this.pos = s.pos.clone(); this.pos.y = 0; this.yaw = s.yaw;
+    this.circle = { x: this.pos.x, z: this.pos.z, r: 0.38 };
+  }
+  samplePoints() { return [V(this.pos.x, 1.5, this.pos.z), V(this.pos.x, 0.9, this.pos.z)]; }
+  shatter() {
+    const G = this.G;
+    this.model.visible = false;
+    G.fx.debris(this.pos); G.audio.shatter(this.pos.clone().setY(1));
+    const i = G.memorials.indexOf(this); if (i >= 0) G.memorials.splice(i, 1);
+  }
 }
 
 export class Killer {
@@ -54,7 +105,52 @@ export class Killer {
     this.poseName = 'tilt'; this.variant = 0; this.heardT = -99; this.stuckT = 0; this.lastPos = V();
     this.circle = { x: 0, z: 0, r: 0.45 };
     this._pts = [V(), V(), V(), V(), V(), V()];
+    // ascension, Toll of Stone, visuals
+    this.tier = 1; this.tollCD = 25; this.toll = null; this.watchedT = 0;
+    this.glow = 0; this.wings = 0; this.trailAcc = 0; this.trailSide = 1; this.releaseT = 0;
+    this.fx = { time: 0, glow: 0, relic: 1, wings: 0, halo: 0 };
+    setTier(this.model, 1);
+    // afterimage left behind when it moves during your blink
+    this.ghostMat = new THREE.MeshBasicMaterial({ color: 0xaeb8c6, transparent: true, opacity: 0, depthWrite: false });
+    this.ghost = auraClone(this.model, this.ghostMat); this.ghost.visible = false; G.scene.add(this.ghost);
+    this.ghostT = 0; this.ghostPending = false; this.ghostPos = V();
     poseReliquary(this.model, 'tilt');
+  }
+
+  // Grow into the next form of the statue.
+  ascend(tier) {
+    const G = this.G;
+    if (tier <= this.tier) return;
+    this.tier = tier;
+    setTier(this.model, tier);
+    for (const st of G.sentinels) setTier(st.model, tier);
+    this.glow = 1;
+    G.audio.ascend(this.headPos());
+    G.fx.dust(this.pos.clone().setY(1.6), 50);
+    G.fx.shockwave(this.pos, 9, 0xffd8b0);
+    G.onAscend(this, tier);
+  }
+
+  // The player's eyes are closing: remember where the stone stood.
+  snapGhost() {
+    copyPose(this.model, this.ghost);
+    this.ghost.position.copy(this.model.position); this.ghost.rotation.copy(this.model.rotation);
+    this.ghostPos.copy(this.pos); this.ghostPending = true;
+  }
+
+  scald() {
+    const G = this.G;
+    this.stun(3, 'holy');
+    this.transferCD = Math.max(this.transferCD, 30);
+    if (this.toll) { this.toll = null; G.audio.fizzle(this.headPos()); }
+    this.tollCD = Math.max(this.tollCD, 15);
+    G.toast('The holy water scalds the Reliquary', 'good');
+  }
+
+  nearestWatcherDist() {
+    let d = 1e9;
+    for (const s of this.G.survivors) if (s.watching) d = Math.min(d, flatDist(s.pos, this.pos));
+    return d;
   }
 
   place(p) { this.pos.set(p.x, 0, p.z); this.sync(0); }
@@ -77,6 +173,8 @@ export class Killer {
 
   stun(t, why) {
     this.stunT = Math.max(this.stunT, t);
+    if (this.action?.type === 'canonize') this.action.target.endCanonize(false);
+    if (this.toll) { this.toll = null; this.G.audio.fizzle(this.headPos()); this.tollCD = Math.max(this.tollCD, 8); }
     this.action = null; this.path = null;
     if (this.carrying) this.dropCarried(false);
     this.G.audio.stoneShift(this.pos.clone().setY(1.5), 0.6);
@@ -132,8 +230,36 @@ export class Killer {
         if (this.frozenT > 2.5) this.releaseT = Math.min(1.0, 0.35 + this.frozenT * 0.08);
       }
     }
-    this.lament = this.frozenT > 5;
+    // a votive candle's light keeps it from Lamenting or tolling
+    const candle = G.nearCandle(this.pos);
+    if (candle) this.frozenT = Math.min(this.frozenT, 3.9);
+    this.lament = this.frozenT > (this.tier >= 3 ? 4 : 5);
     if (this.lament && this.petrified && Math.random() < dt * 6) G.fx.dust(this.headPos().add(V(0, -0.2, 0)), 2);
+
+    // Toll of Stone: held under a long stare, it rings out and forces every eye shut
+    this.tollCD -= dt;
+    this.watchedT = this.petrified ? this.watchedT + dt : 0;
+    if (!this.toll && this.tier >= 2 && this.tollCD <= 0 && this.watchedT > 3 && this.stunT <= 0 && !this.carrying && !candle && this.nearestWatcherDist() < 22) {
+      this.toll = { t: 0, dur: 1.8, lost: 0 };
+      G.audio.tollCharge(this.headPos(), 1.8);
+      G.onTollCharge(this);
+    }
+    if (this.toll) {
+      const tl = this.toll;
+      tl.t += dt; tl.lost = this.petrified ? 0 : tl.lost + dt;
+      if (tl.lost > 0.6) { this.toll = null; this.tollCD = 8; G.audio.fizzle(this.headPos()); }
+      else if (tl.t >= tl.dur) {
+        this.toll = null; this.tollCD = this.tier >= 3 ? 30 : 40;
+        G.tollOfStone(this);
+        this.releaseT = Math.max(this.releaseT, 1.0); this.frozenT = 0;
+      }
+    }
+    // the afterimage appears once the player's eyes reopen
+    if (this.ghostPending && !G.player.blinking) {
+      this.ghostPending = false;
+      if (flatDist(this.pos, this.ghostPos) > 1.2) { this.ghost.visible = true; this.ghostT = 1.6; }
+    }
+    if (this.ghostT > 0) { this.ghostT -= dt; this.ghostMat.opacity = 0.34 * Math.max(0, this.ghostT / 1.6); if (this.ghostT <= 0) this.ghost.visible = false; }
 
     this.moving = false; this.speed = 0;
     if (this.stunT > 0) { this.stunT -= dt; this.sync(dt); return; }
@@ -201,8 +327,9 @@ export class Killer {
   act(dt) {
     const G = this.G;
     if (this.action) return this.doAction(dt);
-    const rel = this.releaseT > 0 ? 8.2 : 0;
-    const surge = Math.max(7.2, rel), base = Math.max(5.0, rel), slow = 1.4;
+    const mult = (G.diff?.killerSpeed ?? 1) * (1 + (this.tier - 1) * 0.05);
+    const rel = this.releaseT > 0 ? 8.2 + (this.tier - 1) * 0.4 : 0;
+    const surge = Math.max(7.2 * mult, rel), base = Math.max(5.0 * mult, rel), slow = 1.4;
     let spd = this.cooldown > 0 ? slow : base;
 
     if (this.state === 'carry' && this.carrying) {
@@ -217,7 +344,12 @@ export class Killer {
       const t = this.target, d = flatDist(t.pos, this.pos);
       if (!t.alive || t.health === 'hooked' || t.health === 'carried') { this.target = null; this.state = 'patrol'; this.goal = null; return; }
       if (t.health === 'downed') {
-        if (d < 1.4) { this.action = { type: 'pickup', t: 0, dur: 1.1, target: t }; return; }
+        if (d < 1.4) {
+          // a survivor already bound twice is not carried: it turns them to stone
+          if (t.hookCount >= 2) { this.yaw = yawTo(this.pos, t.pos); this.action = { type: 'canonize', t: 0, dur: 3.2, target: t }; t.beginCanonize(); G.onCanonizeStart(t); }
+          else this.action = { type: 'pickup', t: 0, dur: 1.1, target: t };
+          return;
+        }
         this.travel(t.pos, d < 7 ? surge : base, dt);
         return;
       }
@@ -265,6 +397,15 @@ export class Killer {
         t.health = 'carried'; t.wiggle = 0; t.vault = null;
         this.carrying = t; this.state = 'carry'; this.path = null;
         G.audio.stoneShift(this.pos.clone().setY(1), 0.3);
+      }
+    } else if (a.type === 'canonize') {
+      const t = a.target;
+      if (t.health !== 'downed' || flatDist(t.pos, this.pos) > 2.2) { this.action = null; t.endCanonize(false); return; }
+      t.setStone(a.t / a.dur);
+      if (Math.random() < dt * 10) G.fx.dust(t.chest(), 2);
+      if (a.t >= a.dur) {
+        this.action = null; t.endCanonize(true);
+        this.target = null; this.state = 'patrol'; this.goal = null;
       }
     } else if (a.type === 'hook') {
       if (a.t >= a.dur) {
@@ -319,11 +460,24 @@ export class Killer {
       const d = flatDist(s.pos, goal);
       if (d < bd && flatDist(s.pos, this.pos) > 15 && !G.isWatched(s.samplePoints())) { bd = d; best = s; }
     }
+    // it can also step out of the statue of someone it canonized
+    for (const m of G.memorials) {
+      const d = flatDist(m.pos, goal);
+      if (d < bd && flatDist(m.pos, this.pos) > 15 && !G.isWatched(m.samplePoints())) { bd = d; best = m; }
+    }
     if (!best) return false;
     const op = this.pos.clone(), oy = this.yaw, opose = this.poseName;
-    this.pos.copy(best.pos); this.yaw = best.yaw; this.poseName = best.pose;
-    poseReliquary(this.model, this.poseName);
-    best.moveTo(op, oy, opose);
+    if (best.isMemorial) {
+      const dir = V(goal.x - best.pos.x, 0, goal.z - best.pos.z).normalize();
+      const p = best.pos.clone().addScaledVector(dir, 1.1);
+      G.world.collide(p, 0.45, G.killerCircles());
+      this.pos.copy(p); this.yaw = Math.atan2(dir.x, dir.z);
+      if (G.sentinels.length < 6) G.sentinels.push(new Sentinel(G, op, oy, opose));
+    } else {
+      this.pos.copy(best.pos); this.yaw = best.yaw; this.poseName = best.pose;
+      pose(this.model, this.poseName, 'pray');
+      best.moveTo(op, oy, opose);
+    }
     G.audio.stoneShift(op.clone().setY(1.2), 0.5); G.audio.stoneShift(this.pos.clone().setY(1.2), 0.5);
     this.transferCD = 30; this.path = null;
     return true;
@@ -379,20 +533,31 @@ export class Killer {
     this.G.world.collide(this.pos, 0.42, circles);
     this.yaw += angDiff(this.yaw, Math.atan2(dir.x, dir.z)) * Math.min(1, dt * 12);
     this.moving = true; this.speed = speed;
+    // cracked footprints where the stone dragged itself
+    this.trailAcc += mv;
+    if (this.trailAcc > 1.1) {
+      this.trailAcc = 0; this.trailSide = -this.trailSide;
+      const rx = Math.cos(this.yaw) * 0.2 * this.trailSide, rz = -Math.sin(this.yaw) * 0.2 * this.trailSide;
+      this.G.fx.crack(this.pos.x + rx, this.pos.z + rz, Math.random() * 6.28, 0.7 + Math.random() * 0.5);
+    }
     return mv >= maxD - 1e-4;
   }
 
   choosePose() {
     const a = this.action;
     let p;
-    if (a) p = { swing: 'lunge', pickup: 'stalk', hook: 'carry', break: 'claw', kick: 'claw', vault: 'stalk', plant: 'pray' }[a.type];
+    if (a) p = { swing: 'lunge', pickup: 'stalk', hook: 'carry', break: 'claw', kick: 'claw', vault: 'stalk', plant: 'pray', canonize: RELIQUARY_POSES.canonize ? 'canonize' : 'reach' }[a.type];
     else if (this.carrying) p = 'carry';
     else if (this.state === 'chase' && this.target) {
       const list = flatDist(this.target.pos, this.pos) < 5 ? POSES.chaseNear : POSES.chaseFar;
       p = list[this.variant % list.length];
     } else if (this.state === 'search' || this.state === 'investigate') p = POSES.search[this.variant % POSES.search.length];
     else p = POSES.patrol[this.variant % POSES.patrol.length];
+    if (!RELIQUARY_POSES[p]) p = 'claw';
     if (p !== this.poseName) { this.poseName = p; poseReliquary(this.model, p); }
+    // its head always turns to the nearest survivor: whenever you look back, it is staring at you
+    const s = nearestSurvivor(this.G, this.pos, 18);
+    if (s) setLook(this.model, angDiff(this.yaw, yawTo(this.pos, s.pos)), Math.atan2(s.eye().y - 2.3, Math.max(0.5, flatDist(s.pos, this.pos))));
   }
 
   sync(dt) {
@@ -400,11 +565,23 @@ export class Killer {
     m.position.copy(this.pos); m.rotation.y = this.yaw;
     this.circle.x = this.pos.x; this.circle.z = this.pos.z;
     this.cloth.position.copy(this.pos);
-    const relic = m.userData.relic.material;
     const pulse = 0.6 + Math.sin(G.time * (this.lament ? 9 : 2.2)) * 0.25;
-    relic.color.setRGB(0.55 * pulse * (this.lament ? 1.8 : 1), 0.11 * pulse, 0.02 * pulse);
+    const k = Math.min(1, dt * 3);
+    const glowWant = this.tier >= 2 ? (this.toll ? 1 : this.moving ? 0.85 : 0.2) : 0;
+    this.glow += (glowWant - this.glow) * k;
+    // wings only move while unseen (it is stone when watched)
+    if (!this.petrified) this.wings += ((this.tier >= 3 ? (this.moving || this.action ? 1 : 0.45) : 0) - this.wings) * Math.min(1, dt * 4);
+    if (hasFX()) {
+      const f = this.fx; f.time = G.time; f.glow = this.glow; f.relic = clamp(pulse * (this.lament ? 1.6 : 1), 0, 1);
+      f.wings = this.wings; f.halo = this.toll ? 1 : this.tier >= 2 ? 0.25 : 0;
+      fxUpdate(m, f);
+    } else {
+      m.userData.relic.material.color.setRGB(0.55 * pulse * (this.lament ? 1.8 : 1), 0.11 * pulse, 0.02 * pulse);
+    }
     const loud = G.player.hasPerk('stonehearing') ? 1.7 : 1;
     G.audio.grind('killer', this.pos.clone().setY(0.6), this.moving ? Math.min(1, this.speed / 5) * loud : 0);
+    const dP = flatDist(G.player.pos, this.pos);
+    G.audio.whisper('killer', this.headPos(), !this.petrified && G.player.alive && dP < 13 ? (1 - dP / 13) * loud : 0);
     if (this.aura.visible) { this.aura.position.copy(m.position); this.aura.rotation.copy(m.rotation); copyPose(m, this.aura); }
   }
 }

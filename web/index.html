@@ -158,6 +158,38 @@
   .score .c .v { font-family: Cinzel, serif; font-size: 24px; color: var(--ember); }
   .score .c .l { font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
   .log { font-size: 12.5px; color: var(--muted); columns: 2; margin-top: 10px; }
+  .rank { font-family: Cinzel, serif; letter-spacing: 0.18em; text-transform: uppercase; font-size: 12px; color: var(--ember); margin: -30px 0 34px 6px; min-height: 1em; }
+  .diffs { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
+  .diff { text-align: left; background: rgba(255,255,255,0.02); border: 1px solid var(--line); color: var(--ink); padding: 10px 12px; cursor: pointer; font-family: Inter, sans-serif; }
+  .diff b { font-family: Cinzel, serif; font-size: 13px; letter-spacing: 0.08em; display: block; }
+  .diff span { font-size: 12.5px; color: var(--muted); }
+  .diff.sel { border-color: var(--blood-hi); background: rgba(179,38,30,0.12); }
+  .diff:hover { border-color: rgba(232,162,74,0.5); }
+  #intro { pointer-events: none; z-index: 6; }
+  #intro .bar-top, #intro .bar-bot { position: absolute; left: 0; right: 0; height: 11vh; background: #000; }
+  #intro .bar-top { top: 0; } #intro .bar-bot { bottom: 0; }
+  #intro .card { position: absolute; left: clamp(16px, 7vw, 110px); bottom: calc(11vh + 36px); max-width: 80vw; animation: cardIn 1.4s ease-out 0.6s both; }
+  #intro .realm { font-family: Cinzel, serif; font-weight: 900; font-size: clamp(28px, 5.4vw, 64px); letter-spacing: 0.12em; color: var(--bone); text-shadow: 0 3px 18px #000; }
+  #intro .meta { font-family: Cinzel, serif; letter-spacing: 0.3em; text-transform: uppercase; font-size: 12px; color: var(--ember); margin-top: 6px; }
+  #intro .line { font-family: 'Cormorant Garamond', serif; font-style: italic; font-size: clamp(17px, 2vw, 24px); color: #cfc6b6; margin-top: 12px; }
+  #intro .skip { position: absolute; right: 22px; bottom: calc(11vh - 34px); color: var(--muted); font-size: 12px; }
+  @keyframes cardIn { from { opacity: 0; transform: translateY(14px); } }
+  #tierHud { position: absolute; top: 66px; left: 24px; display: flex; align-items: center; gap: 8px; }
+  #tierPips { display: flex; gap: 5px; }
+  #tierPips i { width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid rgba(232,162,74,0.55); }
+  #tierPips i.on { background: radial-gradient(circle, #ffd29a, #e0483c 70%); border-color: #ffb070; box-shadow: 0 0 8px rgba(255,120,60,0.7); }
+  #tierName { font-family: Cinzel, serif; font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--muted); text-shadow: 0 1px 3px #000; }
+  #itemSlot { position: absolute; right: 26px; bottom: 170px; display: flex; align-items: center; gap: 10px; background: rgba(0,0,0,0.45); border: 1px solid var(--line); padding: 8px 12px 8px 8px; }
+  #itemIcon { width: 38px; height: 38px; border: 1px solid #6b5a3c; display: grid; place-items: center; background: linear-gradient(135deg, #2a2116, #0e0b08); }
+  #itemIcon svg { width: 26px; height: 26px; }
+  #itemName { font-family: Cinzel, serif; font-size: 12px; letter-spacing: 0.08em; color: var(--bone); }
+  #itemHint { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  #itemBar { height: 3px; background: rgba(255,255,255,0.12); margin-top: 5px; }
+  #itemBar > i { display: block; height: 100%; background: var(--ember); }
+  #lookAway { position: absolute; top: 22%; left: 50%; transform: translateX(-50%); font-family: Cinzel, serif; font-weight: 900; letter-spacing: 0.4em; font-size: clamp(18px, 3vw, 30px); color: #ff8a70; text-shadow: 0 0 18px rgba(255,60,30,0.8), 0 2px 4px #000; animation: pulse 0.35s infinite; }
+  #mirrorFrame { position: absolute; left: 50%; transform: translateX(-50%); bottom: 150px; border-radius: 50%; border: 6px solid #6b4e22; box-shadow: 0 0 0 2px #2a1c0c, inset 0 0 0 2px #c79a52, 0 6px 20px rgba(0,0,0,0.7); background: radial-gradient(ellipse at center, transparent 66%, rgba(8,6,4,0.95) 69%); }
+  #mirrorFrame::after { content: 'MIRROR'; position: absolute; left: 50%; bottom: -26px; transform: translateX(-50%); font-family: Cinzel, serif; font-size: 10px; letter-spacing: 0.3em; color: #c79a52; }
+  #rankEnd { margin-top: 10px; font-family: Cinzel, serif; letter-spacing: 0.12em; color: var(--ember); font-size: 13px; }
   #touchNote { margin-top: 22px; max-width: 34ch; color: var(--ember); font-size: 14px; line-height: 1.5; }
   button.btn:focus-visible, .card:focus-visible, .perk:focus-visible { outline: 2px solid var(--ember); outline-offset: 3px; }
   @media (max-width: 640px) { .log { columns: 1; } #perkHud { display: none; } table.keys td { display: block; } button.btn { min-width: 220px; } }
@@ -176,6 +208,7 @@
 <section id="title" class="screen">
   <h1 class="logo">HOLLOW<span>MOOR</span></h1>
   <div class="sub">The bells stopped when the parish sank. Something wants them rung again.</div>
+  <div class="rank" id="rankLine"></div>
   <div class="menu">
     <button class="btn" data-go="select">Begin Vigil</button>
     <button class="btn ghost" data-go="howto">How to Survive</button>
@@ -192,6 +225,8 @@
     <div class="survivors" id="survivorCards"></div>
     <h3>Perks <span class="count" id="perkCount">0 / 4</span></h3>
     <div class="perks" id="perkCards"></div>
+    <h3>Difficulty</h3>
+    <div class="diffs" id="diffs"></div>
     <div class="actions">
       <button class="btn ghost" data-go="title">Back</button>
       <button class="btn" id="startBtn">Enter the Moor</button>
@@ -207,13 +242,20 @@
     <p>The killer is a saint's statue that <b>cannot move while anyone looks at it</b>. If it is on your screen with nothing in the way, it is stone. If nobody is watching, it is faster than you, and the only warning is the grinding of stone.</p>
     <p>Looking at it drains your <b>Resolve</b> (the eye at the bottom of your screen). When your Resolve runs out, you <b>Blink</b>, and it moves while your eyes are shut. If you stare at it for too long, it starts to <b>Lament</b>: it weeps dust and your eyes give out far faster. The longer it is held still, the harder it lunges the moment nobody is looking. Take turns watching it with your teammates. Look away to recover your Resolve. Blink on purpose when it's out of sight.</p>
     <p>Over time it plants <b>Sentinels</b>, hollow copies of itself, and it can jump into any copy that nobody is watching. Only the real one has a <b>relic that smoulders in its chest</b>. Throw a shroud over a Sentinel to seal it. If you're brave enough to shroud the real thing, you blind it for a few seconds.</p>
+    <h3>It grows</h3>
+    <p>As bells ring and survivors fall, the Reliquary <b>ascends</b>. As a <b>Martyr</b> its halo reforms and its cracks glow. Hold its gaze for more than a few seconds and its halo starts to burn. If anyone is still looking when it finishes, it rings the <b>Toll of Stone</b>, forcing everyone nearby to blink, and then it lunges. When you hear the choir rising, <b>look away</b>. As a <b>Saint Unbound</b> it grows wings, moves faster, and Laments sooner.</p>
+    <p>A survivor who has already been bound twice is not carried to a post. The Reliquary <b>canonizes</b> them, turning them to stone where they lie, and it can later step out of their statue. Watching it stops the stone from spreading, and reviving them in time saves them.</p>
+    <h3>Relics and omens</h3>
+    <p>Search the <b>reliquary chests</b> for one item. The <b>Hand Mirror</b> lets you watch what's behind you while you walk away. A <b>Votive Candle</b> casts a light that stops it from Lamenting or tolling nearby. <b>Holy Water</b> shatters a Sentinel or scalds the Reliquary. <b>Linen Bandages</b> heal you in seconds.</p>
+    <p><b>Crows</b> scatter when you run past them, and the Reliquary hears them. They scatter when the stone moves near them, too. Stone cracks mark the ground where it has walked. <b>Lightning</b> shows you its outline wherever it stands. If it moved while your eyes were shut, a pale <b>afterimage</b> shows where it stood before.</p>
     <h3>Controls</h3>
     <table class="keys">
       <tr><td><kbd>W A S D</kbd> move &nbsp; <kbd>Mouse</kbd> look</td><td><kbd>Shift</kbd> sprint &nbsp; <kbd>C</kbd> / <kbd>Ctrl</kbd> crouch</td></tr>
       <tr><td><kbd>E</kbd> or <kbd>Left Mouse</kbd> (hold): ring bell, heal, unbind, open gate, shroud</td><td><kbd>Space</kbd> vault, drop pallet, toll checks</td></tr>
       <tr><td><kbd>R</kbd> (hold): mend your own wounds</td><td><kbd>B</kbd> blink on purpose (restores Resolve)</td></tr>
       <tr><td><kbd>A</kbd>/<kbd>D</kbd> alternate: wiggle free when carried</td><td><kbd>Space</kbd> on a post: try to tear free (first binding)</td></tr>
-      <tr><td><kbd>Esc</kbd> pause</td><td>Walking backward keeps your eyes on it, but it's slow</td></tr>
+      <tr><td><kbd>F</kbd> or <kbd>Right Mouse</kbd>: use your item (hold for the mirror)</td><td>Walking backward keeps your eyes on it, but it's slow</td></tr>
+      <tr><td><kbd>Esc</kbd> pause</td><td><kbd>Space</kbd> skip the opening</td></tr>
     </table>
     <div class="actions"><button class="btn ghost" data-back>Back</button></div>
   </div>
@@ -253,9 +295,16 @@
     <div class="results" id="results"></div>
     <h3>Embers <span class="count" id="emberTotal"></span></h3>
     <div class="score" id="score"></div>
+    <div id="rankEnd"></div>
     <div class="log" id="scoreLog"></div>
     <div class="actions"><button class="btn" id="againBtn">Keep Another Vigil</button><button class="btn ghost" id="toTitleBtn">Return to the Parish</button></div>
   </div>
+</section>
+
+<section id="intro" class="screen">
+  <div class="bar-top"></div><div class="bar-bot"></div>
+  <div class="card"><div class="realm" id="introRealm">The Sunken Nave</div><div class="meta" id="introDiff">Vigil</div><div class="line">Ring five bells. Do not look away.</div></div>
+  <div class="skip"><kbd>Space</kbd> skip</div>
 </section>
 
 <section id="clickPlay" class="screen">
@@ -264,6 +313,10 @@
 </section>
 
 <section id="hud" class="screen">
+  <div id="tierHud"><div id="tierPips"><i class="on"></i><i></i><i></i></div><div id="tierName">Penitent</div></div>
+  <div id="lookAway" hidden>LOOK AWAY</div>
+  <div id="mirrorFrame" hidden></div>
+  <div id="itemSlot" hidden><div id="itemIcon"></div><div><div id="itemName"></div><div id="itemHint"></div><div id="itemBar"><i></i></div></div></div>
   <div class="tl"><svg id="bellIcon" viewBox="0 0 40 40"><path d="M20 4c-1.5 0-2.5 1-2.5 2.3v1.2C12 9 9.5 13.4 9.5 19v6.5L6 30v2h28v-2l-3.5-4.5V19c0-5.6-2.5-10-8-11.5V6.3C22.5 5 21.5 4 20 4zm-4 30a4 4 0 0 0 8 0z" fill="#d9cfbd"/></svg><div id="bellCount">5</div></div>
   <div id="toasts"></div>
   <div id="collapse"><div class="lbl">THE MOOR RISES</div><div class="pb"><i></i></div></div>

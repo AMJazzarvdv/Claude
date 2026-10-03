@@ -24,6 +24,7 @@ export class Bell {
   slotBlocked(s) {
     const G = this.G;
     if (G.sentinels.some((st) => flatDist(st.pos, s) < 1.0)) return true;
+    if (G.memorials.some((m) => flatDist(m.pos, s) < 0.9)) return true;
     return !!(G.killer && flatDist(G.killer.pos, s) < 1.0);
   }
   freeSlot(from, avoid = null) {
@@ -40,7 +41,7 @@ export class Bell {
     if (!this.done) {
       if (n > 0) {
         const eff = [0, 1, 1.65, 2.1, 2.45][Math.min(n, 4)];
-        let rate = (eff / 72) * G.bellRateMult();
+        let rate = (eff / (G.diff?.bellTime ?? 72)) * G.bellRateMult();
         if (n === 1) { const s = [...this.ringers][0]; if (s.hasPerk('ropeburn')) rate *= 1.15; if (!s.isPlayer) rate *= 0.92; }
         this.progress += rate * dt; this.regress = false;
         this.creakT -= dt; if (this.creakT < 0) { this.creakT = 1.3; G.audio.creak(this.pos.clone().setY(2), 0.35); }
@@ -190,6 +191,13 @@ export class Hatch {
   constructor(G, p) {
     this.G = G; this.pos = V(p.x, 0, p.z);
     this.model = buildHatch(G.M); this.model.position.copy(this.pos);
+    // swap the model's own light for a pre-allocated one (no shader recompile mid-match)
+    const own = []; this.model.traverse((o) => { if (o.isPointLight) own.push(o); });
+    for (const L of own) {
+      const b = G.borrowLight(L.color.getHex(), L.distance, L.intensity);
+      b.position.copy(L.position).add(this.pos);
+      L.parent.remove(L);
+    }
     G.world.root.add(this.model);
     G.audio.boom(this.pos, 70, 0.4);
   }
@@ -198,6 +206,7 @@ export class Hatch {
 // ================================================================ Survivor
 let SURV_ID = 0;
 export class Survivor {
+  static STONE = new THREE.Color(0.42, 0.41, 0.385);
   constructor(G, def, isPlayer, perks = []) {
     this.G = G; this.def = def; this.isPlayer = isPlayer; this.id = SURV_ID++;
     this.name = def.name; this.perks = new Set(perks);
@@ -278,11 +287,13 @@ export class Survivor {
     if (this.blinkT > 0) this.blinkT -= dt;
     this.boost = Math.max(0, this.boost - dt); this.immune = Math.max(0, this.immune - dt);
     this.exhausted = Math.max(0, this.exhausted - dt); this.noBlink = Math.max(0, this.noBlink - dt);
+    this.throwT = Math.max(0, (this.throwT || 0) - dt);
 
     // resolve
     if (!this.watching) {
       let regen = 16 * (this.hasPerk('tallow') ? 2 : 1);
       if (G.killer && flatDist(G.killer.pos, this.pos) < 16) regen *= 0.85; // Moorlight
+      if (G.nearCandle(this.pos)) regen *= 2; // votive candlelight steadies the eyes
       this.resolve = Math.min(this.maxResolve, this.resolve + regen * dt);
       this.watchedFor = 0;
     } else this.watchedFor += dt;
@@ -353,6 +364,16 @@ export class Survivor {
         if (tg === G.killer) { G.killer.veil(); if (this.isPlayer) G.addScore('boldness', 2000, 'Veiled the Reliquary'); }
         else { tg.setShroud(45); if (this.isPlayer) G.addScore('boldness', 400, 'Shrouded a Sentinel'); }
       }
+    } else if (a.type === 'bandage') {
+      if (this.health !== 'injured') { this.cancelAction(); return; }
+      this.healProg = Math.min(0.999, Math.max(this.healProg, a.t / 6));
+      if (a.t >= 6) { this.cancelAction(); this.healProg = 0; this.health = 'healthy'; G.consumeItem(this); G.toast('Your wounds are bound', 'good'); }
+    } else if (a.type === 'search') {
+      const c = a.chest;
+      if (c.opened) { this.cancelAction(); return; }
+      c.progress = Math.min(1, c.progress + dt / 6);
+      if (Math.random() < dt * 0.7) { G.audio.chestCreak(c.pos.clone().setY(0.5)); G.noise(c.pos, 14, 'chest'); }
+      if (c.progress >= 1) { this.cancelAction(); c.open(this); }
     } else if (a.type === 'drop') {
       if (a.t >= 0.25) this.action = null;
     } else if (a.type === 'hatch') {
@@ -451,6 +472,50 @@ export class Survivor {
     this.post = null;
   }
 
+  // ------------------------------------------------------------- stone
+  beginCanonize() { this.canonizing = true; this.cancelAction(); for (const h of [...this.healers]) h.cancelAction(); this.healers.clear(); }
+  endCanonize(done) {
+    this.canonizing = false;
+    if (!done) { this.setStone(0); return; }
+    const G = this.G;
+    this.setStone(1);
+    this.health = 'dead'; this.canonized = true; this.aura.visible = false;
+    G.audio.choir(this.chest(), 3.5, 0.45, 0, 87.3); G.audio.stoneShift(this.chest(), 0.7);
+    G.fx.dust(this.chest(), 50);
+    G.addMemorial(this);
+    G.onSurvivorDied(this, 'canonized');
+  }
+
+  // Lerp every material toward weathered stone, creeping up from the feet.
+  setStone(f) {
+    if (!this._stone) {
+      const own = new Map(), heights = new Map(), wp = V();
+      this.model.updateMatrixWorld(true);
+      this.model.traverse((o) => {
+        if (!o.isMesh || !o.material) return;
+        if (!own.has(o.material)) {
+          const c = o.material.clone();
+          own.set(o.material, { m: c, color: c.color ? c.color.clone() : null, rough: c.roughness, metal: c.metalness, emissive: c.emissive ? c.emissive.clone() : null, y: 0, n: 0 });
+        }
+        const e = own.get(o.material);
+        o.getWorldPosition(wp); e.y += wp.y - this.model.position.y; e.n++;
+        heights.set(o, e);
+        o.material = e.m;
+      });
+      this._stone = [...own.values()];
+      for (const e of this._stone) e.y = e.n ? e.y / e.n : 0;
+    }
+    const STONE = Survivor.STONE;
+    for (const e of this._stone) {
+      const lf = clamp(f * 1.7 - (e.y / 1.8) * 0.7, 0, 1);
+      if (e.color) e.m.color.copy(e.color).lerp(STONE, lf);
+      if (e.rough !== undefined) e.m.roughness = e.rough + (0.95 - e.rough) * lf;
+      if (e.metal !== undefined) e.m.metalness = e.metal * (1 - lf);
+      if (e.emissive) e.m.emissive.copy(e.emissive).multiplyScalar(1 - lf);
+    }
+    this.stone = f;
+  }
+
   escape(how) {
     this.cancelAction();
     this.health = 'escaped'; this.model.visible = false; this.aura.visible = false;
@@ -486,13 +551,16 @@ export class Survivor {
     const o = { injured: this.health === 'injured', speed: this.speed };
     if (this.health === 'hooked') { anim = 'hooked'; o.struggle = this.hookPhase === 2; }
     else if (this.health === 'carried') { anim = 'carried'; o.wiggle = true; }
+    else if (this.canonizing) { anim = 'petrified'; o.phase = this.stone || 0; }
     else if (this.health === 'downed') anim = 'crawl';
     else if (this.vault) anim = 'vault';
     else if (this.action) {
       const t = this.action.type;
-      anim = t === 'ring' ? 'ring' : t === 'heal' || t === 'selfheal' || t === 'hatch' ? 'work' : t === 'drop' ? 'drop' : 'reach';
+      anim = t === 'ring' ? 'ring' : t === 'heal' || t === 'selfheal' || t === 'hatch' || t === 'bandage' || t === 'search' ? 'work' : t === 'drop' ? 'drop' : 'reach';
       o.phase = this.action.t / 0.25;
-    } else if (this.speed > 3.0) anim = 'run';
+    } else if (this.mirrorUp) anim = 'hold';
+    else if (this.throwT > 0) { anim = 'throw'; o.phase = 1 - this.throwT / 0.5; }
+    else if (this.speed > 3.0) anim = 'run';
     else if (this.speed > 0.3) anim = this.crouch ? 'crouch' : this.backpedal ? 'back' : 'walk';
     else if (this.crouch) { anim = 'crouch'; o.speed = 0; }
     if (anim === 'crouch' && this.speed < 0.3) { this.animT -= dt; }
@@ -573,7 +641,7 @@ export class Survivor {
     if (this.health === 'downed') {
       // crawl away from the killer toward the nearest teammate
       const mate = G.survivors.filter((s) => s !== this && s.standing).sort((a, b) => flatDist(a.pos, this.pos) - flatDist(b.pos, this.pos))[0];
-      if (this.healers.size) { this.speed = 0; return; }
+      if (this.healers.size || this.canonizing) { this.speed = 0; return; }
       if (k && flatDist(k.pos, this.pos) < 10) { const away = V(this.pos.x - k.pos.x, 0, this.pos.z - k.pos.z); this.moveTo(away, 0.7, dt); }
       else if (mate && flatDist(mate.pos, this.pos) > 3) this.aiPathTo(mate.pos, dt, 0.7);
       else this.speed = 0;
@@ -588,13 +656,21 @@ export class Survivor {
     ai.glanceT -= dt;
     if (ai.glanceT < 0) {
       ai.glanceT = 1.5 + Math.random() * 2;
-      if (dK < 16 && G.world.lineOfSight(this.eye(), k.headPos()) && Math.random() < 0.3) { ai.noticed = G.time; }
+      if (dK < 16 && G.world.lineOfSight(this.eye(), k.headPos()) && Math.random() < (G.diff?.aiNotice ?? 0.3)) { ai.noticed = G.time; }
     }
     const noticed = G.time - (ai.noticed ?? -99) < 4 && dK < 22;
 
+    // a teammate is being turned to stone: hold the Reliquary's gaze to stop it
+    if (!k.toll && G.survivors.some((s) => s.canonizing) && dK < 25 && this.resolve > 15 && G.world.lineOfSight(this.eye(), k.headPos())) {
+      this.setAI('watch'); this.cancelActionIfNot();
+      this.yaw += angDiff(this.yaw, yawTo(this.pos, k.pos)) * Math.min(1, dt * 8);
+      this.speed = 0;
+      return;
+    }
     // threat response
     if ((aware || noticed) && dK < 12 && !k.carrying) {
-      const canStare = this.noBlink > 0 || this.resolve > (ai.state === 'watch' ? 8 : 80);
+      // when its halo burns, look away before the Toll
+      const canStare = !k.toll && (this.noBlink > 0 || this.resolve > (ai.state === 'watch' ? 8 : 80));
       if (canStare && dK > 1.6) {
         this.setAI('watch');
         this.cancelActionIfNot();
@@ -748,5 +824,5 @@ export class Survivor {
 export function copyPose(src, dst) {
   const a = [], b = [];
   src.traverse((o) => a.push(o)); dst.traverse((o) => b.push(o));
-  for (let i = 0; i < a.length && i < b.length; i++) { b[i].position.copy(a[i].position); b[i].rotation.copy(a[i].rotation); b[i].visible = a[i].visible; }
+  for (let i = 0; i < a.length && i < b.length; i++) { b[i].position.copy(a[i].position); b[i].rotation.copy(a[i].rotation); b[i].scale.copy(a[i].scale); b[i].visible = a[i].visible; }
 }

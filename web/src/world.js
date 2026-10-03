@@ -7,6 +7,7 @@ import { mulberry32, Noise, clamp } from './noise.js';
 import {
   MergeBucket, boxGeo, worldUV, treeGeometry, rockGeometry, gravestoneGeometries,
 } from './models.js';
+import * as PM from './models/props.js';
 
 export const HALF = 50;
 const CELL = 0.5;
@@ -23,6 +24,7 @@ export class World {
     this.root = new THREE.Group(); scene.add(this.root);
     this.boxes = []; this.circles = []; this.dynBoxes = [];
     this.windows = []; this.palletSpots = []; this.bellSpots = []; this.postSpots = []; this.gateSpots = [];
+    this.chestSpots = []; this.perches = []; this.decorLights = [];
     this.bucket = new MergeBucket();
     this.occupied = []; // {x,z,r} for decor placement
     this.grid = new Uint8Array(GN * GN);
@@ -177,11 +179,13 @@ export class World {
       placed++;
     }
     this.buildGraveyard();
+    this.buildDecor();
     this.buildTrees();
     this.buildRocks();
     this.buildPools();
     this.bucket.build(this.root);
     this.buildNav();
+    this.buildPerches();
     this.buildGrass();
     this.buildSky();
     this.buildMist();
@@ -341,6 +345,91 @@ export class World {
     this.occupy(0, 11, 4); this.occupy(0, -11, 4);
   }
 
+  // Props placed by the map: chests, buttresses, carts, coffins, fences,
+  // lantern posts and candle shrines. Builders come from models/props.js.
+  placeProp(name, x, z, ry, ...args) {
+    const fn = PM[name];
+    if (typeof fn !== 'function') return null;
+    const g = fn(this.M, ...args);
+    g.position.set(x, 0, z); g.rotation.y = ry;
+    this.root.add(g);
+    return g;
+  }
+
+  // collision box for an object of size w (along local x) by d (along local z), rotated by a quarter-turn multiple
+  propBox(x, z, ry, w, d, h, kind = 'wall') {
+    const q = Math.round(ry / (Math.PI / 2)) % 2 !== 0;
+    const hx = (q ? d : w) / 2, hz = (q ? w : d) / 2;
+    this.addBox(x - hx, x + hx, 0, h, z - hz, z + hz, null, kind, 0, false);
+  }
+
+  buildDecor() {
+    const R = this.rnd, Q = () => Math.floor(R() * 4) * Math.PI / 2;
+    const far = (x, z, list, r) => list.every((p) => Math.hypot(p.x - x, p.z - z) > r);
+    // church buttresses between the openings of the long walls
+    for (const [x, side] of [[-9, 1], [-1.5, 1], [1.6, 1], [6.3, 1], [-9.5, -1], [-3.5, -1], [3, -1], [8.5, -1]]) {
+      const z = side * (6.5 + 0.375);
+      if (PM.buildButtress) this.placeProp('buildButtress', x, z, side > 0 ? 0 : Math.PI, 3.6);
+      else this.bucket.add(this.M.stone, boxGeo(0.7, 3.6, 0.9, x, 1.8, z + side * 0.45), 0.36);
+      this.addBox(x - 0.35, x + 0.35, 0, 3.6, Math.min(z, z + side * 0.9), Math.max(z, z + side * 0.9), null, 'wall', 0, false);
+    }
+    // reliquary chests
+    for (let tries = 0, n = 0; tries < 300 && n < 6; tries++) {
+      const x = (R() - 0.5) * (HALF * 2 - 10), z = (R() - 0.5) * (HALF * 2 - 10);
+      if (!this.isFree(x, z, 1.6) || !far(x, z, this.bellSpots, 8) || !far(x, z, this.postSpots, 6) || !far(x, z, this.chestSpots, 18)) continue;
+      const rot = Q();
+      this.chestSpots.push({ x, z, rot });
+      this.propBox(x, z, rot, 0.95, 0.6, 0.6, 'nosight');
+      this.occupy(x, z, 1.4);
+      n++;
+    }
+    // carts, coffins, fences, lantern posts, candle shrines
+    const scatter = (count, r, fn) => {
+      for (let tries = 0, n = 0; tries < 200 && n < count; tries++) {
+        const x = (R() - 0.5) * (HALF * 2 - 8), z = (R() - 0.5) * (HALF * 2 - 8);
+        if (!this.isFree(x, z, r) || !far(x, z, this.bellSpots, 6)) continue;
+        if (fn(x, z) !== false) { this.occupy(x, z, r); n++; }
+      }
+    };
+    scatter(3, 2.2, (x, z) => { if (!PM.buildCart) return false; const ry = Q(); this.placeProp('buildCart', x, z, ry); this.propBox(x, z, ry, 1.2, 2.0, 1.1); });
+    scatter(4, 1.6, (x, z) => { if (!PM.buildCoffin) return false; const ry = Q(); this.placeProp('buildCoffin', x, z, ry); this.propBox(x, z, ry, 0.7, 2.0, 0.55, 'nosight'); });
+    scatter(4, 5, (x, z) => {
+      if (!PM.buildFence) return false;
+      const len = 5 + Math.floor(R() * 4), ry = Q();
+      this.placeProp('buildFence', x, z, ry, len);
+      const ex = Math.cos(ry) * len, ez = -Math.sin(ry) * len;
+      this.addBox(Math.min(x, x + ex) - 0.08, Math.max(x, x + ex) + 0.08, 0, 1.1, Math.min(z, z + ez) - 0.08, Math.max(z, z + ez) + 0.08, null, 'nosight', 0, false);
+    });
+    scatter(5, 1.2, (x, z) => {
+      if (!PM.buildLanternPost) return false;
+      const g = this.placeProp('buildLanternPost', x, z, R() * 6.28);
+      this.circles.push({ x, z, r: 0.15, h: 2.4 });
+      const lp = g.userData.lampPos;
+      if (lp) this.decorLights.push(lp.clone().applyMatrix4(g.matrixWorld.compose(g.position, g.quaternion, g.scale)));
+    });
+    for (let k = 0; k < 9; k++) {
+      // shrines of candles among the graves and by the church
+      const x = -10 + R() * 20, z = (R() < 0.5 ? -1 : 1) * (7.6 + R() * 6.5);
+      if (PM.buildCandleCluster && this.isFree(x, z, 0.4)) { this.placeProp('buildCandleCluster', x, z, R() * 6.28); this.occupy(x, z, 0.4); }
+    }
+  }
+
+  // Where crows perch: open ground, wall tops and gravestones.
+  buildPerches() {
+    const R = this.rnd;
+    for (let tries = 0; tries < 200 && this.perches.length < 9; tries++) {
+      const x = (R() - 0.5) * (HALF * 2 - 8), z = (R() - 0.5) * (HALF * 2 - 8);
+      const c = this.cellIndex(x, z);
+      if (c >= 0 && this.grid[c] === FREE && this.perches.every((p) => Math.hypot(p.x - x, p.z - z) > 12)) this.perches.push({ x, y: 0, z });
+    }
+    const tops = this.boxes.filter((b) => b.kind === 'wall' && b.maxY > 1.3 && b.maxY < 3.3 && b.minY < 0.1 && (b.maxX - b.minX) * (b.maxZ - b.minZ) > 0.25 && Math.abs((b.minX + b.maxX) / 2) < HALF - 2 && Math.abs((b.minZ + b.maxZ) / 2) < HALF - 2);
+    for (let k = 0; k < 6 && tops.length; k++) {
+      const b = tops[Math.floor(R() * tops.length)];
+      const x = (b.minX + b.maxX) / 2, z = (b.minZ + b.maxZ) / 2;
+      if (this.perches.every((p) => Math.hypot(p.x - x, p.z - z) > 8)) this.perches.push({ x, y: b.maxY, z, wall: true });
+    }
+  }
+
   buildTrees() {
     const R = this.rnd;
     const variants = [treeGeometry(11), treeGeometry(23), treeGeometry(37), treeGeometry(51)];
@@ -463,10 +552,10 @@ export class World {
     this.moonDir = new THREE.Vector3(-0.45, 0.42, -0.78).normalize();
     const mat = new THREE.ShaderMaterial({
       side: THREE.BackSide, depthWrite: false, fog: false,
-      uniforms: { uTime: { value: 0 }, uMoon: { value: this.moonDir }, uFog: { value: this.scene.fog ? this.scene.fog.color : new THREE.Color(0x262b33) } },
+      uniforms: { uTime: { value: 0 }, uFlash: { value: 0 }, uMoon: { value: this.moonDir }, uFog: { value: this.scene.fog ? this.scene.fog.color : new THREE.Color(0x262b33) } },
       vertexShader: 'varying vec3 vDir; void main(){ vDir = position; vec4 p = modelViewMatrix * vec4(position,1.0); gl_Position = projectionMatrix * p; gl_Position.z = gl_Position.w; }',
       fragmentShader: `
-        varying vec3 vDir; uniform float uTime; uniform vec3 uMoon; uniform vec3 uFog;
+        varying vec3 vDir; uniform float uTime; uniform float uFlash; uniform vec3 uMoon; uniform vec3 uFog;
         float hash(vec3 p){ p = fract(p*0.3183099+0.1); p*=17.0; return fract(p.x*p.y*p.z*(p.x+p.y+p.z)); }
         float h2(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
         float vn(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
@@ -488,6 +577,7 @@ export class World {
           vec3 ccol = uFog * 1.1 + vec3(0.2,0.22,0.27) * pow(max(md,0.0), 6.0);
           col = mix(col, ccol, cm*0.92);
           col = mix(col, uFog, 1.0 - smoothstep(-0.05,0.12,h));
+          col += vec3(0.55, 0.6, 0.78) * uFlash * (0.4 + cm * 1.2);
           gl_FragColor = vec4(col, 1.0);
         }`,
     });
