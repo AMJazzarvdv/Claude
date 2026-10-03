@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hollowmoor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=Inter:wght@400;500;600&display=swap">
+<style>
+  /* Layout: full-bleed WebGL moor with menus as slabs of dark stone over it. Single dark look by design. */
+  :root {
+    --bg: #07080a; --ink: #e8e2d6; --muted: #8f897e; --faint: #4a463f;
+    --blood: #b3261e; --blood-hi: #e0483c; --ember: #e8a24a; --bone: #d9cfbd;
+    --panel: rgba(12, 12, 14, 0.82); --line: rgba(232, 226, 214, 0.14);
+    --ok: #c9b27a; --cold: #9fb6d6;
+  }
+  :root { color-scheme: dark; }
+  [hidden] { display: none !important; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); overflow: hidden; font-family: Inter, system-ui, sans-serif; }
+  canvas#view { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
+  .screen { position: fixed; inset: 0; display: none; z-index: 10; }
+  .screen.on { display: flex; }
+  .serif { font-family: Cinzel, 'Times New Roman', serif; }
+  button.btn {
+    font-family: Cinzel, serif; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase;
+    background: linear-gradient(180deg, rgba(40, 10, 8, 0.85), rgba(16, 6, 6, 0.9)); color: var(--bone);
+    border: 1px solid rgba(179, 38, 30, 0.55); padding: 14px 34px; font-size: 15px; cursor: pointer; min-width: 260px;
+    clip-path: polygon(10px 0, calc(100% - 10px) 0, 100% 50%, calc(100% - 10px) 100%, 10px 100%, 0 50%);
+    transition: background .2s, color .2s, transform .1s;
+  }
+  button.btn:hover { background: linear-gradient(180deg, rgba(120, 22, 16, 0.95), rgba(50, 8, 6, 0.95)); color: #fff; }
+  button.btn:active { transform: scale(0.98); }
+  button.btn.ghost { background: rgba(10, 10, 12, 0.6); border-color: var(--line); }
+  button.btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+  /* loading */
+  #loading { align-items: center; justify-content: center; flex-direction: column; background: radial-gradient(ellipse at center, #121418 0%, #050506 70%); z-index: 50; }
+  #loading .logo { font-size: clamp(30px, 8vw, 86px); }
+  .logo { font-family: Cinzel, serif; font-weight: 900; letter-spacing: 0.16em; color: var(--bone); text-shadow: 0 0 30px rgba(179, 38, 30, 0.35), 0 4px 0 #000; margin: 0; }
+  .logo span { color: var(--blood-hi); }
+  .bar { width: min(420px, 80vw); height: 3px; background: #1b1b1e; margin-top: 30px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--blood), var(--ember)); transition: width .2s; }
+  #loadText { margin-top: 14px; color: var(--muted); font-family: 'Cormorant Garamond', serif; font-style: italic; font-size: 18px; }
+
+  /* title */
+  #title { flex-direction: column; justify-content: center; padding-left: clamp(16px, 8vw, 120px); background: linear-gradient(90deg, rgba(0,0,0,0.78) 0%, rgba(0,0,0,0.35) 45%, rgba(0,0,0,0) 70%); }
+  #title .logo { font-size: clamp(26px, 7.6vw, 110px); line-height: 1; text-wrap: balance; }
+  #title .sub { font-family: 'Cormorant Garamond', serif; font-style: italic; font-size: clamp(18px, 2.4vw, 26px); color: var(--muted); margin: 10px 0 44px 6px; }
+  #title .menu { display: flex; flex-direction: column; gap: 14px; align-items: flex-start; }
+  #title .foot { position: absolute; bottom: 18px; left: clamp(16px, 8vw, 120px); color: var(--faint); font-size: 12px; letter-spacing: 0.08em; }
+
+  /* panels */
+  .panelwrap { align-items: center; justify-content: center; background: rgba(3, 3, 4, 0.72); backdrop-filter: blur(3px); padding: 16px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); max-width: 1180px; width: 100%; max-height: 92vh; overflow: auto; padding: clamp(16px, 3vw, 34px); position: relative; }
+  .panel h2 { font-family: Cinzel, serif; letter-spacing: 0.2em; margin: 0 0 6px; font-size: 26px; color: var(--bone); }
+  .panel h3 { font-family: Cinzel, serif; letter-spacing: 0.16em; font-size: 15px; color: var(--ember); margin: 22px 0 10px; text-transform: uppercase; }
+  .panel p, .panel li { color: #c9c2b4; line-height: 1.55; font-size: 14.5px; }
+  .muted { color: var(--muted); }
+  .row { display: flex; gap: 14px; flex-wrap: wrap; }
+  .actions { display: flex; gap: 14px; justify-content: flex-end; margin-top: 26px; flex-wrap: wrap; }
+
+  /* survivor + perk select */
+  .survivors { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+  .card { border: 1px solid var(--line); background: rgba(255,255,255,0.02); padding: 14px; cursor: pointer; display: flex; gap: 12px; transition: border-color .2s, background .2s; }
+  .card:hover { border-color: rgba(232,162,74,0.5); }
+  .card.sel { border-color: var(--blood-hi); background: rgba(179,38,30,0.12); box-shadow: inset 0 0 0 1px rgba(224,72,60,0.35); }
+  .card svg { flex: 0 0 64px; }
+  .card b { font-family: Cinzel, serif; display: block; font-size: 14px; letter-spacing: 0.06em; }
+  .card .t { color: var(--ember); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; }
+  .card .bio { color: var(--muted); font-size: 12.5px; margin-top: 6px; font-family: 'Cormorant Garamond', serif; font-style: italic; font-size: 15px; line-height: 1.3; }
+  .perks { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+  .perk { display: flex; gap: 14px; align-items: center; padding: 10px 12px; border: 1px solid var(--line); cursor: pointer; background: rgba(255,255,255,0.02); }
+  .perk:hover { border-color: rgba(232,162,74,0.5); }
+  .perk.sel { border-color: var(--ember); background: rgba(232,162,74,0.09); }
+  .perk .d { flex: 0 0 46px; height: 46px; transform: rotate(45deg); border: 1px solid #6b5a3c; background: linear-gradient(135deg, #2a2116, #0e0b08); display: grid; place-items: center; }
+  .perk.sel .d { border-color: var(--ember); background: linear-gradient(135deg, #5a3a16, #1a1008); }
+  .perk .d svg { transform: rotate(-45deg); width: 26px; height: 26px; }
+  .perk b { font-family: Cinzel, serif; font-size: 13px; letter-spacing: 0.06em; display: block; }
+  .perk span { font-size: 12.5px; color: var(--muted); line-height: 1.35; display: block; margin-top: 2px; }
+  .count { font-family: Cinzel, serif; color: var(--ember); letter-spacing: 0.1em; }
+  table.keys { border-collapse: collapse; width: 100%; }
+  table.keys td { padding: 6px 8px; border-bottom: 1px solid var(--line); font-size: 14px; color: #c9c2b4; }
+  kbd { font-family: Inter, sans-serif; font-size: 12px; background: #1c1c20; border: 1px solid #3a3a40; border-bottom-width: 3px; padding: 2px 8px; border-radius: 3px; color: var(--bone); white-space: nowrap; }
+  .setting { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .setting label { font-size: 14px; }
+  input[type=range] { width: 220px; accent-color: var(--blood-hi); }
+  select { background: #141416; color: var(--ink); border: 1px solid var(--line); padding: 6px 10px; font-family: Inter, sans-serif; }
+
+  /* HUD */
+  #hud { pointer-events: none; z-index: 5; }
+  #hud .tl { position: absolute; top: 20px; left: 22px; display: flex; align-items: center; gap: 12px; }
+  #bellCount { font-family: Cinzel, serif; font-weight: 700; font-size: 34px; color: var(--bone); text-shadow: 0 2px 6px #000; }
+  #bellIcon { width: 38px; height: 38px; }
+  #bellIcon.done path { fill: var(--ember); }
+  #status { position: absolute; left: 22px; bottom: 22px; display: flex; flex-direction: column; gap: 8px; }
+  .srow { display: flex; align-items: center; gap: 10px; }
+  .srow .pt { width: 46px; height: 46px; position: relative; }
+  .srow .pt svg { width: 46px; height: 46px; }
+  .srow .ring { position: absolute; inset: -3px; border: 2px solid rgba(232,226,214,0.25); border-radius: 50%; }
+  .srow.injured .ring { border-color: var(--blood); }
+  .srow.downed .ring { border-color: var(--blood-hi); border-style: dashed; }
+  .srow.hooked .ring { border-color: var(--ember); animation: pulse 1s infinite; }
+  .srow.carried .ring { border-color: var(--ember); }
+  .srow.dead { opacity: 0.35; filter: grayscale(1); }
+  .srow.escaped { opacity: 0.55; }
+  .srow .nm { font-size: 12px; color: var(--bone); text-shadow: 0 1px 3px #000; letter-spacing: 0.04em; }
+  .srow .st { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.14em; }
+  .srow .pips { display: flex; gap: 4px; margin-top: 3px; }
+  .srow .pips i { width: 12px; height: 4px; background: rgba(255,255,255,0.15); }
+  .srow .pips i.on { background: var(--blood-hi); }
+  .srow .hb { width: 90px; height: 3px; background: rgba(255,255,255,0.12); margin-top: 3px; }
+  .srow .hb > i { display: block; height: 100%; background: var(--ember); }
+  @keyframes pulse { 50% { opacity: 0.35; } }
+  #perkHud { position: absolute; right: 26px; bottom: 26px; display: grid; grid-template-columns: repeat(2, 48px); gap: 16px 18px; }
+  #perkHud .d { width: 44px; height: 44px; transform: rotate(45deg); border: 1px solid #6b5a3c; background: linear-gradient(135deg, #3a2a16, #0e0b08); display: grid; place-items: center; position: relative; overflow: hidden; }
+  #perkHud .d svg { transform: rotate(-45deg); width: 24px; height: 24px; }
+  #perkHud .d .cd { position: absolute; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.65); }
+  #perkHud .d.active { box-shadow: 0 0 12px rgba(232,162,74,0.8); border-color: var(--ember); }
+  #resolve { position: absolute; left: 50%; bottom: 120px; transform: translateX(-50%); width: 64px; height: 64px; opacity: 0.9; transition: opacity .3s; }
+  #resolve.full { opacity: 0.25; }
+  #resolve.lament svg .eye { stroke: var(--blood-hi); }
+  #prompt { position: absolute; left: 50%; bottom: 58px; transform: translateX(-50%); text-align: center; min-width: 300px; }
+  #prompt .p { font-size: 14px; color: var(--bone); text-shadow: 0 1px 4px #000; letter-spacing: 0.04em; }
+  #prompt .pb { width: 300px; height: 6px; background: rgba(0,0,0,0.6); border: 1px solid rgba(255,255,255,0.18); margin: 8px auto 0; display: none; }
+  #prompt .pb > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #8a1d16, var(--blood-hi)); }
+  #prompt .pb.heal > i { background: linear-gradient(90deg, #6a5a2a, var(--ok)); }
+  #toasts { position: absolute; top: 22px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .toast { font-family: Cinzel, serif; letter-spacing: 0.12em; font-size: 14px; padding: 6px 18px; background: rgba(0,0,0,0.55); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); color: var(--bone); animation: tin .3s ease-out; }
+  .toast.bad { color: #ff8a80; } .toast.good { color: var(--ok); } .toast.warn { color: var(--ember); } .toast.big { font-size: 20px; padding: 10px 26px; }
+  @keyframes tin { from { opacity: 0; transform: translateY(-8px); } }
+  #collapse { position: absolute; top: 70px; left: 50%; transform: translateX(-50%); width: 360px; display: none; text-align: center; }
+  #collapse .lbl { font-family: Cinzel, serif; font-size: 12px; letter-spacing: 0.25em; color: var(--blood-hi); }
+  #collapse .pb { height: 4px; background: rgba(0,0,0,0.6); margin-top: 6px; }
+  #collapse .pb > i { display: block; height: 100%; background: var(--blood-hi); }
+  #skill { position: absolute; left: 50%; top: 50%; width: 150px; height: 150px; transform: translate(-50%, -50%); display: none; }
+  #skill .k { position: absolute; inset: 0; display: grid; place-items: center; font-family: Inter; font-size: 13px; color: var(--bone); }
+  #wiggle { position: absolute; left: 50%; top: 62%; transform: translateX(-50%); width: 320px; display: none; text-align: center; }
+  #wiggle .pb { height: 8px; background: rgba(0,0,0,0.6); border: 1px solid rgba(255,255,255,0.2); margin-top: 8px; }
+  #wiggle .pb > i { display: block; height: 100%; background: var(--ember); }
+  #crosshair { position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px; border-radius: 50%; background: rgba(255,255,255,0.35); }
+  #fps { position: absolute; right: 8px; top: 6px; font-size: 11px; color: var(--faint); }
+
+  #clickPlay { align-items: center; justify-content: center; flex-direction: column; background: rgba(0,0,0,0.55); z-index: 20; cursor: pointer; }
+  #clickPlay h2 { font-family: Cinzel, serif; letter-spacing: 0.25em; }
+
+  /* end screen */
+  #end .verdict { font-family: Cinzel, serif; font-weight: 900; font-size: clamp(34px, 6vw, 64px); letter-spacing: 0.14em; margin: 0; }
+  #end .verdict.good { color: var(--ok); } #end .verdict.bad { color: var(--blood-hi); }
+  #end .epitaph { font-family: 'Cormorant Garamond', serif; font-style: italic; font-size: 20px; color: var(--muted); margin: 6px 0 20px; }
+  .results { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+  .results .r { border: 1px solid var(--line); padding: 10px 12px; display: flex; gap: 10px; align-items: center; }
+  .results .r svg { width: 42px; height: 42px; flex: 0 0 42px; }
+  .results .r b { font-size: 13px; display: block; }
+  .results .r span { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; }
+  .score { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-top: 8px; }
+  .score .c { border: 1px solid var(--line); padding: 12px; }
+  .score .c .v { font-family: Cinzel, serif; font-size: 24px; color: var(--ember); }
+  .score .c .l { font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
+  .log { font-size: 12.5px; color: var(--muted); columns: 2; margin-top: 10px; }
+  #touchNote { margin-top: 22px; max-width: 34ch; color: var(--ember); font-size: 14px; line-height: 1.5; }
+  button.btn:focus-visible, .card:focus-visible, .perk:focus-visible { outline: 2px solid var(--ember); outline-offset: 3px; }
+  @media (max-width: 640px) { .log { columns: 1; } #perkHud { display: none; } table.keys td { display: block; } button.btn { min-width: 220px; } }
+  @media (prefers-reduced-motion: reduce) { .toast { animation: none; } .srow.hooked .ring { animation: none; } }
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<section id="loading" class="screen on">
+  <h1 class="logo">HOLLOW<span>MOOR</span></h1>
+  <div class="bar"><i id="loadBar"></i></div>
+  <div id="loadText">Kindling the vigil…</div>
+</section>
+
+<section id="title" class="screen">
+  <h1 class="logo">HOLLOW<span>MOOR</span></h1>
+  <div class="sub">The bells stopped when the parish sank. Something wants them rung again.</div>
+  <div class="menu">
+    <button class="btn" data-go="select">Begin Vigil</button>
+    <button class="btn ghost" data-go="howto">How to Survive</button>
+    <button class="btn ghost" data-go="settings">Settings</button>
+  </div>
+  <div id="touchNote" hidden>Hollowmoor is played with a keyboard and mouse. Open this page on a computer to keep the vigil.</div>
+  <div class="foot">Every model, texture and sound in Hollowmoor is generated in code at load time. Rendered with three.js (MIT). Best with headphones, keyboard &amp; mouse.</div>
+</section>
+
+<section id="select" class="screen panelwrap">
+  <div class="panel">
+    <h2>Choose your Mourner</h2>
+    <p class="muted">Three others will keep the vigil with you. The Reliquary will be waiting.</p>
+    <div class="survivors" id="survivorCards"></div>
+    <h3>Perks <span class="count" id="perkCount">0 / 4</span></h3>
+    <div class="perks" id="perkCards"></div>
+    <div class="actions">
+      <button class="btn ghost" data-go="title">Back</button>
+      <button class="btn" id="startBtn">Enter the Moor</button>
+    </div>
+  </div>
+</section>
+
+<section id="howto" class="screen panelwrap">
+  <div class="panel">
+    <h2>How to Survive</h2>
+    <p>Ring <b>5 of the 7 Mourning Bells</b> to unseal the Lychgates, open a gate, and walk out of Hollowmoor. Everyone who's knocked down is bound to a <b>Weeping Post</b> and starts sinking into the peat. A third binding means the moor keeps them.</p>
+    <h3>The Reliquary</h3>
+    <p>The killer is a saint's statue that <b>cannot move while anyone looks at it</b>. If it is on your screen with nothing in the way, it is stone. If nobody is watching, it is faster than you, and the only warning is the grinding of stone.</p>
+    <p>Looking at it drains your <b>Resolve</b> (the eye at the bottom of your screen). When your Resolve runs out, you <b>Blink</b>, and it moves while your eyes are shut. If you stare at it for too long, it starts to <b>Lament</b>: it weeps dust and your eyes give out far faster. The longer it is held still, the harder it lunges the moment nobody is looking. Take turns watching it with your teammates. Look away to recover your Resolve. Blink on purpose when it's out of sight.</p>
+    <p>Over time it plants <b>Sentinels</b>, hollow copies of itself, and it can jump into any copy that nobody is watching. Only the real one has a <b>relic that smoulders in its chest</b>. Throw a shroud over a Sentinel to seal it. If you're brave enough to shroud the real thing, you blind it for a few seconds.</p>
+    <h3>Controls</h3>
+    <table class="keys">
+      <tr><td><kbd>W A S D</kbd> move &nbsp; <kbd>Mouse</kbd> look</td><td><kbd>Shift</kbd> sprint &nbsp; <kbd>C</kbd> / <kbd>Ctrl</kbd> crouch</td></tr>
+      <tr><td><kbd>E</kbd> or <kbd>Left Mouse</kbd> (hold): ring bell, heal, unbind, open gate, shroud</td><td><kbd>Space</kbd> vault, drop pallet, toll checks</td></tr>
+      <tr><td><kbd>R</kbd> (hold): mend your own wounds</td><td><kbd>B</kbd> blink on purpose (restores Resolve)</td></tr>
+      <tr><td><kbd>A</kbd>/<kbd>D</kbd> alternate: wiggle free when carried</td><td><kbd>Space</kbd> on a post: try to tear free (first binding)</td></tr>
+      <tr><td><kbd>Esc</kbd> pause</td><td>Walking backward keeps your eyes on it, but it's slow</td></tr>
+    </table>
+    <div class="actions"><button class="btn ghost" data-back>Back</button></div>
+  </div>
+</section>
+
+<section id="settings" class="screen panelwrap">
+  <div class="panel" style="max-width:640px">
+    <h2>Settings</h2>
+    <div class="setting"><label for="sens">Mouse sensitivity</label><input type="range" id="sens" min="0.2" max="3" step="0.05" value="1"></div>
+    <div class="setting"><label for="vol">Master volume</label><input type="range" id="vol" min="0" max="1" step="0.01" value="0.8"></div>
+    <div class="setting"><label for="quality">Graphics quality</label><select id="quality"><option value="high">High (bloom, dense grass, soft shadows)</option><option value="low">Low (faster)</option></select></div>
+    <div class="setting"><label for="invert">Invert vertical look</label><input type="checkbox" id="invert"></div>
+    <div class="setting"><label for="showFps">Show frame rate</label><input type="checkbox" id="showFps"></div>
+    <p class="muted" style="font-size:12.5px">Quality changes take effect at the start of the next vigil.</p>
+    <div class="actions"><button class="btn ghost" data-back>Back</button></div>
+  </div>
+</section>
+
+<section id="pause" class="screen panelwrap">
+  <div class="panel" style="max-width:520px;text-align:center">
+    <h2>The Vigil Waits</h2>
+    <p class="muted">The Reliquary does not.</p>
+    <div class="menu" style="display:flex;flex-direction:column;gap:12px;align-items:center;margin-top:20px">
+      <button class="btn" id="resumeBtn">Resume</button>
+      <button class="btn ghost" data-go="howto">How to Survive</button>
+      <button class="btn ghost" data-go="settings">Settings</button>
+      <button class="btn ghost" id="abandonBtn">Abandon Vigil</button>
+    </div>
+  </div>
+</section>
+
+<section id="end" class="screen panelwrap">
+  <div class="panel">
+    <h1 class="verdict" id="verdict">ESCAPED</h1>
+    <div class="epitaph" id="epitaph"></div>
+    <h3>The Four</h3>
+    <div class="results" id="results"></div>
+    <h3>Embers <span class="count" id="emberTotal"></span></h3>
+    <div class="score" id="score"></div>
+    <div class="log" id="scoreLog"></div>
+    <div class="actions"><button class="btn" id="againBtn">Keep Another Vigil</button><button class="btn ghost" id="toTitleBtn">Return to the Parish</button></div>
+  </div>
+</section>
+
+<section id="clickPlay" class="screen">
+  <h2>Click to return to the moor</h2>
+  <p class="muted">Esc for the menu</p>
+</section>
+
+<section id="hud" class="screen">
+  <div class="tl"><svg id="bellIcon" viewBox="0 0 40 40"><path d="M20 4c-1.5 0-2.5 1-2.5 2.3v1.2C12 9 9.5 13.4 9.5 19v6.5L6 30v2h28v-2l-3.5-4.5V19c0-5.6-2.5-10-8-11.5V6.3C22.5 5 21.5 4 20 4zm-4 30a4 4 0 0 0 8 0z" fill="#d9cfbd"/></svg><div id="bellCount">5</div></div>
+  <div id="toasts"></div>
+  <div id="collapse"><div class="lbl">THE MOOR RISES</div><div class="pb"><i></i></div></div>
+  <div id="crosshair"></div>
+  <div id="skill"><svg viewBox="0 0 150 150" width="150" height="150"><circle cx="75" cy="75" r="56" fill="rgba(0,0,0,0.35)" stroke="rgba(255,255,255,0.75)" stroke-width="3"/><path id="skGood" fill="none" stroke="rgba(255,255,255,0.9)" stroke-width="10"/><path id="skGreat" fill="none" stroke="#fff" stroke-width="10"/><line id="skNeedle" x1="75" y1="75" x2="75" y2="12" stroke="#e0483c" stroke-width="4" stroke-linecap="round"/></svg><div class="k"><kbd>Space</kbd></div></div>
+  <div id="wiggle"><div class="p">Alternate <kbd>A</kbd> <kbd>D</kbd> to wiggle free</div><div class="pb"><i></i></div></div>
+  <div id="resolve"><svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="28" fill="rgba(0,0,0,0.4)" stroke="rgba(255,255,255,0.12)" stroke-width="4"/><circle id="resolveArc" cx="32" cy="32" r="28" fill="none" stroke="#d9cfbd" stroke-width="4" stroke-dasharray="176" stroke-dashoffset="0" transform="rotate(-90 32 32)" stroke-linecap="round"/><path class="eye" d="M14 32c5-7 11-10 18-10s13 3 18 10c-5 7-11 10-18 10s-13-3-18-10z" fill="none" stroke="#d9cfbd" stroke-width="2.5"/><circle id="pupil" cx="32" cy="32" r="5" fill="#d9cfbd"/></svg></div>
+  <div id="prompt"><div class="p" id="promptText"></div><div class="pb" id="promptBar"><i></i></div></div>
+  <div id="status"></div>
+  <div id="perkHud"></div>
+  <div id="fps"></div>
+</section>
+
+<script type="module" src="game.js"></script>
+</body>
+</html>

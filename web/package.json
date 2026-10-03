@@ -1,0 +1,13 @@
+{
+  "name": "hollowmoor",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Hollowmoor - a 1v4 asymmetric horror game where every model, texture and sound is generated in code",
+  "scripts": {
+    "build": "esbuild src/main.js --bundle --minify --format=esm --target=es2020 --outfile=dist/game.js && cp index.html dist/index.html",
+    "artifact": "npm run build && node tools/make-artifact.mjs",
+    "dev": "esbuild src/main.js --bundle --format=esm --sourcemap --outfile=dist/game.js --servedir=dist"
+  },
+  "dependencies": { "three": "0.160.0" },
+  "devDependencies": { "esbuild": "0.24.0" }
+}

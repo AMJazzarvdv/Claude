@@ -1,6 +1,10 @@
 # Hollowmoor
 
-An original asymmetric horror game (1 killer vs 4 survivors) built in **Unreal Engine 5**.
+An original asymmetric horror game (1 killer vs 4 survivors).
+
+**▶ The finished, playable game is in [`web/`](web/README.md).** It runs in the browser, and every model, texture, animation and sound is generated in code. Serve `web/dist/` and play.
+
+The `Source/` folder holds an earlier Unreal Engine 5 C++ prototype of the same design.
 Its headline killer is **The Reliquary**, a saint's statue that can't move while it's watched. It wears down your eyes until you blink, and it can hop into any decoy statue nobody is watching.
 
 See [`Docs/GameDesign.md`](Docs/GameDesign.md) for the full design: killers, survivors, perks, maps and the graphics plan.
