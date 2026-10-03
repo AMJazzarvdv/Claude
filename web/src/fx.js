@@ -123,12 +123,12 @@ class Shockwaves {
   constructor(scene) {
     this.list = [];
     for (let k = 0; k < 3; k++) {
-      const m = new THREE.Mesh(new THREE.RingGeometry(0.85, 1, 64), new THREE.MeshBasicMaterial({ color: 0xffb070, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false }));
+      const m = new THREE.Mesh(new THREE.RingGeometry(0.93, 1, 72), new THREE.MeshBasicMaterial({ color: 0xff8a4a, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false }));
       m.rotation.x = -Math.PI / 2; m.visible = false; scene.add(m);
       this.list.push({ m, t: 99, max: 24, dur: 0.8 });
     }
   }
-  fire(pos, radius = 24, color = 0xffb070) {
+  fire(pos, radius = 24, color = 0xff8a4a) {
     const w = this.list.find((x) => x.t >= x.dur) || this.list[0];
     w.t = 0; w.max = radius; w.m.position.set(pos.x, 0.25, pos.z); w.m.visible = true; w.m.material.color.setHex(color);
   }
@@ -137,7 +137,7 @@ class Shockwaves {
       if (w.t >= w.dur) { w.m.visible = false; continue; }
       w.t += dt;
       const f = Math.min(1, w.t / w.dur), r = 0.5 + w.max * (1 - Math.pow(1 - f, 3));
-      w.m.scale.set(r, r, r); w.m.material.opacity = (1 - f) * 0.85;
+      w.m.scale.set(r, r, r); w.m.material.opacity = (1 - f) * 0.6;
     }
   }
 }

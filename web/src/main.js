@@ -7,7 +7,8 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { buildTextures } from './textures.js';
-import { makeMaterials, SURVIVORS, buildReliquary, poseReliquary } from './models.js';
+import { makeMaterials, SURVIVORS, buildReliquary, poseReliquary, RELIQUARY_POSES } from './models.js';
+import * as RM from './models/reliquary.js';
 import { World, HALF } from './world.js';
 import { AudioEngine } from './audio.js';
 import { Bell, Pallet, Post, Gate, Hatch, Survivor, V, angDiff, yawTo, flatDist } from './entities.js';
@@ -243,8 +244,11 @@ class Game {
     this.state = 'title';
     if (!this.world) this.buildWorld(7);
     if (!this.titleStatue) {
+      // the title shows it fully ascended
       this.titleStatue = buildReliquary(this.M, { alive: true });
-      poseReliquary(this.titleStatue, 'weep');
+      poseReliquary(this.titleStatue, RELIQUARY_POSES.judgement ? 'judgement' : 'weep');
+      RM.setReliquaryTier?.(this.titleStatue, 3);
+      this.titleFX = { time: 0, glow: 0.6, relic: 0.8, wings: 1, halo: 0.6 };
     }
     // find a moonlit vantage with a clear view of the church and free ground for the statue
     const W = this.world, look = V(-3.5, 2.6, -8.2);
@@ -334,8 +338,9 @@ class Game {
       if (!end && W.raycast(p, head) > 0.98) end = p;
     }
     this.introTo = end || V(k.pos.x + f.x * 3.4, 1.9, k.pos.z + f.z * 3.4);
-    this.introFrom = V(k.pos.x * 0.3, 34, k.pos.z * 0.3 - 10);
-    this.introLook0 = V(0, 0, 0); this.introLook1 = head.clone().add(V(0, -0.15, 0));
+    const back = V(this.introTo.x - k.pos.x, 0, this.introTo.z - k.pos.z).normalize();
+    this.introFrom = V(k.pos.x + back.x * 26 + back.z * 8, 9, k.pos.z + back.z * 26 - back.x * 8);
+    this.introLook0 = V(k.pos.x, 2.5, k.pos.z); this.introLook1 = head.clone().add(V(0, -0.15, 0));
     k.sync(0);
     audio.toll(null, 98, 0.6, 9);
     setTimeout(() => { if (this.state === 'intro') audio.choir(this.killer.headPos(), 3.5, 0.35, 0, 98); }, 3000);
@@ -346,7 +351,7 @@ class Game {
     const t = clamp(this.introT / (this.introDur - 1.0), 0, 1);
     const e = t * t * (3 - 2 * t);
     camera.position.lerpVectors(this.introFrom, this.introTo, e);
-    camera.position.y += Math.sin(e * Math.PI) * 6;
+    camera.position.y += Math.sin(e * Math.PI) * 2;
     const look = this.introLook0.clone().lerp(this.introLook1, Math.min(1, e * 1.4));
     camera.lookAt(look); camera.updateMatrixWorld();
     audio.setListener(camera.position, look.clone().sub(camera.position).normalize());
@@ -958,6 +963,10 @@ class Game {
     camera.lookAt(-3.5, 2.6, -8.2);
     camera.updateMatrixWorld();
     for (const b of this.bells) b.update(dt);
+    if (this.titleFX && RM.updateReliquaryFX) {
+      const f = this.titleFX; f.time = this.time; f.glow = 0.55 + Math.sin(this.time * 1.3) * 0.25; f.relic = 0.7 + Math.sin(this.time * 2.2) * 0.25;
+      RM.updateReliquaryFX(this.titleStatue, f);
+    }
     this.titleStart ??= performance.now();
     grade.uniforms.uFade.value = clamp(1 - (performance.now() - this.titleStart) / 2000, 0, 1);
     grade.uniforms.uBlink.value = 0; grade.uniforms.uLow.value = 0; grade.uniforms.uHurt.value = 0; grade.uniforms.uLament.value = 0; grade.uniforms.uHit.value = 0;
@@ -1091,7 +1100,7 @@ function renderMirror() {
   if (frameEl.hidden === on) frameEl.hidden = !on;
   if (!on) return;
   const w = Math.round(Math.min(360, innerWidth * 0.34)), h = Math.round(w * 0.6);
-  const x = Math.round((innerWidth - w) / 2), y = 150;
+  const x = Math.round((innerWidth - w) / 2), y = 190;
   mirrorCam.aspect = w / h; mirrorCam.updateProjectionMatrix();
   frameEl.style.width = w + 'px'; frameEl.style.height = h + 'px'; frameEl.style.bottom = y + 'px';
   const auto = renderer.shadowMap.autoUpdate;

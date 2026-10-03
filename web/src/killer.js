@@ -127,7 +127,7 @@ export class Killer {
     this.glow = 1;
     G.audio.ascend(this.headPos());
     G.fx.dust(this.pos.clone().setY(1.6), 50);
-    G.fx.shockwave(this.pos, 9, 0xffd8b0);
+    G.fx.shockwave(this.pos, 10, 0xffb070);
     G.onAscend(this, tier);
   }
 

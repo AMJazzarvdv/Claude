@@ -168,7 +168,7 @@
   #intro { pointer-events: none; z-index: 6; }
   #intro .bar-top, #intro .bar-bot { position: absolute; left: 0; right: 0; height: 11vh; background: #000; }
   #intro .bar-top { top: 0; } #intro .bar-bot { bottom: 0; }
-  #intro .card { position: absolute; left: clamp(16px, 7vw, 110px); bottom: calc(11vh + 36px); max-width: 80vw; animation: cardIn 1.4s ease-out 0.6s both; }
+  #intro .introcard { position: absolute; left: clamp(16px, 7vw, 110px); bottom: calc(11vh + 36px); max-width: 80vw; animation: cardIn 1.4s ease-out 0.6s both; }
   #intro .realm { font-family: Cinzel, serif; font-weight: 900; font-size: clamp(28px, 5.4vw, 64px); letter-spacing: 0.12em; color: var(--bone); text-shadow: 0 3px 18px #000; }
   #intro .meta { font-family: Cinzel, serif; letter-spacing: 0.3em; text-transform: uppercase; font-size: 12px; color: var(--ember); margin-top: 6px; }
   #intro .line { font-family: 'Cormorant Garamond', serif; font-style: italic; font-size: clamp(17px, 2vw, 24px); color: #cfc6b6; margin-top: 12px; }
@@ -187,8 +187,8 @@
   #itemBar { height: 3px; background: rgba(255,255,255,0.12); margin-top: 5px; }
   #itemBar > i { display: block; height: 100%; background: var(--ember); }
   #lookAway { position: absolute; top: 22%; left: 50%; transform: translateX(-50%); font-family: Cinzel, serif; font-weight: 900; letter-spacing: 0.4em; font-size: clamp(18px, 3vw, 30px); color: #ff8a70; text-shadow: 0 0 18px rgba(255,60,30,0.8), 0 2px 4px #000; animation: pulse 0.35s infinite; }
-  #mirrorFrame { position: absolute; left: 50%; transform: translateX(-50%); bottom: 150px; border-radius: 50%; border: 6px solid #6b4e22; box-shadow: 0 0 0 2px #2a1c0c, inset 0 0 0 2px #c79a52, 0 6px 20px rgba(0,0,0,0.7); background: radial-gradient(ellipse at center, transparent 66%, rgba(8,6,4,0.95) 69%); }
-  #mirrorFrame::after { content: 'MIRROR'; position: absolute; left: 50%; bottom: -26px; transform: translateX(-50%); font-family: Cinzel, serif; font-size: 10px; letter-spacing: 0.3em; color: #c79a52; }
+  #mirrorFrame { position: absolute; left: 50%; transform: translateX(-50%); bottom: 190px; overflow: hidden; }
+  #mirrorFrame .oval { position: absolute; inset: 2px; border-radius: 50%; border: 6px solid #6b4e22; box-shadow: 0 0 0 2px #2a1c0c, inset 0 0 0 2px #c79a52, inset 0 0 26px rgba(0,0,0,0.75), 0 0 0 400px #07060a; }
   #rankEnd { margin-top: 10px; font-family: Cinzel, serif; letter-spacing: 0.12em; color: var(--ember); font-size: 13px; }
   #touchNote { margin-top: 22px; max-width: 34ch; color: var(--ember); font-size: 14px; line-height: 1.5; }
   button.btn:focus-visible, .card:focus-visible, .perk:focus-visible { outline: 2px solid var(--ember); outline-offset: 3px; }
@@ -303,7 +303,7 @@
 
 <section id="intro" class="screen">
   <div class="bar-top"></div><div class="bar-bot"></div>
-  <div class="card"><div class="realm" id="introRealm">The Sunken Nave</div><div class="meta" id="introDiff">Vigil</div><div class="line">Ring five bells. Do not look away.</div></div>
+  <div class="introcard"><div class="realm" id="introRealm">The Sunken Nave</div><div class="meta" id="introDiff">Vigil</div><div class="line">Ring five bells. Do not look away.</div></div>
   <div class="skip"><kbd>Space</kbd> skip</div>
 </section>
 
@@ -315,7 +315,7 @@
 <section id="hud" class="screen">
   <div id="tierHud"><div id="tierPips"><i class="on"></i><i></i><i></i></div><div id="tierName">Penitent</div></div>
   <div id="lookAway" hidden>LOOK AWAY</div>
-  <div id="mirrorFrame" hidden></div>
+  <div id="mirrorFrame" hidden><div class="oval"></div></div>
   <div id="itemSlot" hidden><div id="itemIcon"></div><div><div id="itemName"></div><div id="itemHint"></div><div id="itemBar"><i></i></div></div></div>
   <div class="tl"><svg id="bellIcon" viewBox="0 0 40 40"><path d="M20 4c-1.5 0-2.5 1-2.5 2.3v1.2C12 9 9.5 13.4 9.5 19v6.5L6 30v2h28v-2l-3.5-4.5V19c0-5.6-2.5-10-8-11.5V6.3C22.5 5 21.5 4 20 4zm-4 30a4 4 0 0 0 8 0z" fill="#d9cfbd"/></svg><div id="bellCount">5</div></div>
   <div id="toasts"></div>
