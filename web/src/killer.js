@@ -136,6 +136,7 @@ export class Killer {
     copyPose(this.model, this.ghost);
     this.ghost.position.copy(this.model.position); this.ghost.rotation.copy(this.model.rotation);
     this.ghostPos.copy(this.pos); this.ghostPending = true;
+    this.ghost.visible = false; this.ghostT = 0; this.ghostMat.opacity = 0;
   }
 
   scald() {
@@ -175,6 +176,7 @@ export class Killer {
     this.stunT = Math.max(this.stunT, t);
     if (this.action?.type === 'canonize') this.action.target.endCanonize(false);
     if (this.toll) { this.toll = null; this.G.audio.fizzle(this.headPos()); this.tollCD = Math.max(this.tollCD, 8); }
+    if (this.action?.type === 'vault') { const a = this.action; this.pos.copy(a.t < a.dur / 2 ? a.from : a.to); this.pos.y = 0; }
     this.action = null; this.path = null;
     if (this.carrying) this.dropCarried(false);
     this.G.audio.stoneShift(this.pos.clone().setY(1.5), 0.6);
@@ -247,7 +249,8 @@ export class Killer {
     if (this.toll) {
       const tl = this.toll;
       tl.t += dt; tl.lost = this.petrified ? 0 : tl.lost + dt;
-      if (tl.lost > 0.6) { this.toll = null; this.tollCD = 8; G.audio.fizzle(this.headPos()); }
+      if (candle) { this.toll = null; this.tollCD = Math.max(this.tollCD, 8); G.audio.fizzle(this.headPos()); }
+      else if (tl.lost > 0.6) { this.toll = null; this.tollCD = 8; G.audio.fizzle(this.headPos()); }
       else if (tl.t >= tl.dur) {
         this.toll = null; this.tollCD = this.tier >= 3 ? 30 : 40;
         G.tollOfStone(this);
@@ -261,6 +264,8 @@ export class Killer {
     }
     if (this.ghostT > 0) { this.ghostT -= dt; this.ghostMat.opacity = 0.34 * Math.max(0, this.ghostT / 1.6); if (this.ghostT <= 0) this.ghost.visible = false; }
 
+    // a canonize target that was revived (or died) frees the stone at once, watched or not
+    if (this.action?.type === 'canonize' && this.action.target.health !== 'downed') { this.action.target.endCanonize(false); this.action = null; }
     this.moving = false; this.speed = 0;
     if (this.stunT > 0) { this.stunT -= dt; this.sync(dt); return; }
     if (this.petrified) { this.sync(dt); return; }

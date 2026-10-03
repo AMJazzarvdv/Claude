@@ -59,7 +59,7 @@ const FOG = 0x464e5c;
 scene.fog = new THREE.FogExp2(FOG, 0.03);
 scene.background = new THREE.Color(FOG);
 const camera = new THREE.PerspectiveCamera(64, innerWidth / innerHeight, 0.05, 900);
-const mirrorCam = new THREE.PerspectiveCamera(50, 1.6, 0.1, 400);
+const mirrorCam = new THREE.PerspectiveCamera(50, 1.6, 0.05, 400);
 // The mirror's view renders to a texture that is drawn, flipped like a real
 // mirror, onto an oval over the HUD.
 const mirrorRT = new THREE.WebGLRenderTarget(16, 16, { type: THREE.HalfFloatType });
@@ -181,7 +181,7 @@ function lock() {
 document.addEventListener('pointerlockchange', () => {
   if (!game) return;
   if (document.pointerLockElement === canvas) { if (game.state === 'paused') game.resume(true); ui.show('clickPlay', false); }
-  else if (game.state === 'playing' && !noLock) game.pause();
+  else if ((game.state === 'playing' || game.state === 'intro') && !noLock) { game.endIntro(); game.pause(); }
 });
 document.addEventListener('pointerlockerror', () => { noLock = true; });
 
@@ -240,7 +240,12 @@ class Game {
   }
 
   disposeMatch() {
-    for (const s of this.survivors) { scene.remove(s.model); scene.remove(s.aura); }
+    for (const s of this.survivors) {
+      scene.remove(s.model); scene.remove(s.aura);
+      // survivors are rebuilt every match: free their meshes (textures are cached and shared; held items are not theirs)
+      if (s.heldModel) s.heldModel.parent?.remove(s.heldModel);
+      s.model.traverse((o) => { if (o.isMesh) o.geometry.dispose(); });
+    }
     if (this.killer) { scene.remove(this.killer.model); scene.remove(this.killer.aura); scene.remove(this.killer.cloth); scene.remove(this.killer.ghost); audio.silenceGrind('killer'); }
     for (const pr of this.projectiles) scene.remove(pr.model);
     if (this.weather) { this.weather.dispose(scene); this.weather = null; }
@@ -288,6 +293,7 @@ class Game {
 
   // ---------------------------------------------------------------- match
   async startMatch(defIndex, perks) {
+    this.matchId = (this.matchId || 0) + 1;
     ui.only();
     grade.uniforms.uFade.value = 1;
     $('loadText').textContent = 'The moor shifts beneath you…';
@@ -383,11 +389,12 @@ class Game {
     this.camYaw = this.player.yaw; this.camPitch = -0.12;
     this.camPos.copy(this.player.pos).add(V(0, 2, 0));
     keys.clear(); pressed.clear();
-    setTimeout(() => this.toast('Ring five of the seven Mourning Bells', 'big'), 600);
-    setTimeout(() => this.toast('It cannot move while you watch it', 'warn'), 3800);
+    const m = this.matchId;
+    setTimeout(() => { if (this.matchId === m && this.state !== 'title') this.toast('Ring five of the seven Mourning Bells', 'big'); }, 600);
+    setTimeout(() => { if (this.matchId === m && this.state !== 'title') this.toast('It cannot move while you watch it', 'warn'); }, 3800);
   }
 
-  pause() { if (this.state !== 'playing') return; this.state = 'paused'; ui.only('hud', 'pause'); keys.clear(); mouseDown = false; }
+  pause() { if (this.state !== 'playing') return; this.state = 'paused'; ui.only('hud', 'pause'); keys.clear(); mouseDown = false; audio.silenceGrind('killer'); }
   resume(fromLock = false) {
     if (this.state !== 'paused') return;
     this.state = 'playing'; ui.only('hud');
@@ -535,6 +542,8 @@ class Game {
   canSee(s, pts) {
     if (!s.alive || s.blinking || s.health === 'hooked' || s.health === 'carried') return false;
     if (s.isPlayer) {
+      // the orbit camera while you are turned to stone is not your gaze
+      if (s.canonizing) return false;
       if (s.mirrorUp) {
         // the hand mirror shows what is behind you, and that gaze counts too
         for (const p of pts) {
@@ -747,7 +756,8 @@ class Game {
     let prog = null, heal = false;
     if (a.type === 'ring') prog = a.bell.progress;
     else if (a.type === 'heal') { prog = a.target.healProg; heal = true; }
-    else if (a.type === 'selfheal' || a.type === 'bandage') { prog = s.healProg; heal = true; }
+    else if (a.type === 'bandage') { prog = Math.max(s.healProg, a.t / 6); heal = true; }
+    else if (a.type === 'selfheal') { prog = s.healProg; heal = true; }
     else if (a.type === 'search') prog = a.chest.progress;
     else if (a.type === 'unhook') prog = a.t / 1.2;
     else if (a.type === 'gate') prog = a.gate.progress;
@@ -845,7 +855,8 @@ class Game {
     audio.setListener(camera.position, look);
     // the mirror looks backward from just behind your head
     const fwd = V(Math.sin(this.camYaw), 0, Math.cos(this.camYaw));
-    mirrorCam.position.set(s.pos.x - fwd.x * 0.3, s.pos.y + (s.crouch ? 1.05 : 1.65), s.pos.z - fwd.z * 0.3);
+    // inside the body's collision circle, so a wall at your back is never clipped through
+    mirrorCam.position.set(s.pos.x - fwd.x * 0.2, s.pos.y + (s.crouch ? 1.05 : 1.65), s.pos.z - fwd.z * 0.2);
     mirrorCam.lookAt(mirrorCam.position.x - fwd.x * 10, mirrorCam.position.y - 0.4, mirrorCam.position.z - fwd.z * 10);
     mirrorCam.updateMatrixWorld();
   }
@@ -982,7 +993,7 @@ class Game {
     }
     this.titleStart ??= performance.now();
     grade.uniforms.uFade.value = clamp(1 - (performance.now() - this.titleStart) / 2000, 0, 1);
-    grade.uniforms.uBlink.value = 0; grade.uniforms.uLow.value = 0; grade.uniforms.uHurt.value = 0; grade.uniforms.uLament.value = 0; grade.uniforms.uHit.value = 0;
+    grade.uniforms.uBlink.value = 0; grade.uniforms.uLow.value = 0; grade.uniforms.uHurt.value = 0; grade.uniforms.uLament.value = 0; grade.uniforms.uHit.value = 0; grade.uniforms.uWarn.value = 0;
     audio.setListener(camera.position, camera.getWorldDirection(V()));
     audio.update(dt, { listener: camera.position, chase: 0, breath: 0, lament: 0 });
   }
@@ -1108,7 +1119,7 @@ function frame(now) {
 
 // The hand mirror: a small second view of what is behind you.
 function renderMirror() {
-  const on = game?.state === 'playing' && game.player?.mirrorUp;
+  const on = game?.state === 'playing' && game.player?.alive && game.player.mirrorUp;
   const frameEl = $('mirrorFrame');
   if (frameEl.hidden === on) frameEl.hidden = !on;
   if (!on) return;

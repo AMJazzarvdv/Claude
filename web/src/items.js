@@ -92,7 +92,10 @@ export class HolyFlask {
     this.model.position.copy(this.pos);
     this.model.rotation.x += dt * 9; this.model.rotation.z += dt * 5;
     G.fx.holyGlow(this.pos);
-    // statues first: the Reliquary, its Sentinels, canonized survivors
+    // walls first, so nothing is splashed through them
+    const wall = G.world.raycast(prev, this.pos);
+    if (wall < 0.999) { this.pos.lerpVectors(prev, this.pos, Math.max(0, wall - 0.02)); return this.burst(null); }
+    // then statues: the Reliquary, its Sentinels, canonized survivors
     const hitR = (p, r, h) => {
       const dx = this.pos.x - p.x, dz = this.pos.z - p.z;
       return dx * dx + dz * dz < r * r && this.pos.y < h && this.pos.y > -0.1;
@@ -101,8 +104,7 @@ export class HolyFlask {
     if (k && hitR(k.pos, 0.75, 2.7)) return this.burst(k);
     for (const st of G.sentinels) if (hitR(st.pos, 0.75, 2.6)) return this.burst(st);
     for (const m of G.memorials) if (hitR(m.pos, 0.6, 1.9)) return this.burst(m);
-    const blocked = G.world.raycast(prev, this.pos) < 0.999;
-    if (this.pos.y <= 0.02 || blocked || this.t > 4) this.burst(null);
+    if (this.pos.y <= 0.02 || this.t > 4) this.burst(null);
   }
   burst(target) {
     const G = this.G;
@@ -112,7 +114,8 @@ export class HolyFlask {
     G.fx.splash(this.pos);
     // a near miss still splashes whatever stands within a step of the impact
     if (!target) {
-      const near = (p, r) => flatDist(p, this.pos) < r && this.pos.y < 3;
+      const from = V(this.pos.x, Math.max(this.pos.y, 0.15), this.pos.z);
+      const near = (p, r) => flatDist(p, this.pos) < r && this.pos.y < 3 && G.world.lineOfSight(from, V(p.x, 1.0, p.z));
       if (G.killer && near(G.killer.pos, 1.6)) target = G.killer;
       else target = G.sentinels.find((st) => near(st.pos, 1.5)) || G.memorials.find((m) => near(m.pos, 1.3)) || null;
     }

@@ -395,10 +395,11 @@ export class World {
     scatter(4, 1.6, (x, z) => { if (!PM.buildCoffin) return false; const ry = Q(); this.placeProp('buildCoffin', x, z, ry); this.propBox(x, z, ry, 0.7, 2.0, 0.55, 'nosight'); });
     scatter(4, 5, (x, z) => {
       if (!PM.buildFence) return false;
+      // centred on the free spot, so the whole run stays inside the space it reserved
       const len = 5 + Math.floor(R() * 4), ry = Q();
-      this.placeProp('buildFence', x, z, ry, len);
-      const ex = Math.cos(ry) * len, ez = -Math.sin(ry) * len;
-      this.addBox(Math.min(x, x + ex) - 0.08, Math.max(x, x + ex) + 0.08, 0, 1.1, Math.min(z, z + ez) - 0.08, Math.max(z, z + ez) + 0.08, null, 'nosight', 0, false);
+      const ex = Math.cos(ry) * len, ez = -Math.sin(ry) * len, x0 = x - ex / 2, z0 = z - ez / 2;
+      this.placeProp('buildFence', x0, z0, ry, len);
+      this.addBox(Math.min(x0, x0 + ex) - 0.08, Math.max(x0, x0 + ex) + 0.08, 0, 1.1, Math.min(z0, z0 + ez) - 0.08, Math.max(z0, z0 + ez) + 0.08, null, 'nosight', 0, false);
     });
     scatter(5, 1.2, (x, z) => {
       if (!PM.buildLanternPost) return false;

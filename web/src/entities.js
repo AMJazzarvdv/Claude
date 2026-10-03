@@ -322,6 +322,7 @@ export class Survivor {
         this.healProg = 0;
         const was = this.health;
         this.health = was === 'downed' ? 'injured' : 'healthy';
+        if (this.canonizing) this.endCanonize(false);
         for (const h of [...this.healers]) { if (h.isPlayer && h !== this) G.addScore('altruism', 800, was === 'downed' ? 'Revived' : 'Healed'); h.cancelAction(); }
         this.healers.clear(); this.healClaim = null;
       }
@@ -366,7 +367,6 @@ export class Survivor {
       }
     } else if (a.type === 'bandage') {
       if (this.health !== 'injured') { this.cancelAction(); return; }
-      this.healProg = Math.min(0.999, Math.max(this.healProg, a.t / 6));
       if (a.t >= 6) { this.cancelAction(); this.healProg = 0; this.health = 'healthy'; G.consumeItem(this); G.toast('Your wounds are bound', 'good'); }
     } else if (a.type === 'search') {
       const c = a.chest;
@@ -461,7 +461,7 @@ export class Survivor {
 
   die(how) {
     const G = this.G;
-    this.cancelAction();
+    this.cancelAction(); this.mirrorUp = false;
     if (this.post) { this.post.occupant = null; }
     const where = this.post ? this.post.pos.clone() : this.pos.clone();
     this.health = 'dead';
@@ -518,7 +518,7 @@ export class Survivor {
   }
 
   escape(how) {
-    this.cancelAction();
+    this.cancelAction(); this.mirrorUp = false;
     this.health = 'escaped'; this.model.visible = false; this.aura.visible = false;
     this.G.onEscape(this, how);
   }
@@ -662,12 +662,15 @@ export class Survivor {
     const noticed = G.time - (ai.noticed ?? -99) < 4 && dK < 22;
 
     // a teammate is being turned to stone: hold the Reliquary's gaze to stop it
-    if (!k.toll && G.survivors.some((s) => s.canonizing) && dK < 25 && this.resolve > 15 && G.world.lineOfSight(this.eye(), k.headPos())) {
+    const holdCanon = ai.state === 'watch' && ai.canonHold;
+    if (!k.toll && G.survivors.some((s) => s.canonizing) && dK < 25 && this.resolve > (holdCanon ? 15 : 40) && G.world.lineOfSight(this.eye(), k.headPos())) {
+      ai.canonHold = true;
       this.setAI('watch'); this.cancelActionIfNot();
       this.yaw += angDiff(this.yaw, yawTo(this.pos, k.pos)) * Math.min(1, dt * 8);
       this.speed = 0;
       return;
     }
+    ai.canonHold = false;
     // threat response
     if ((aware || noticed) && dK < 12 && !k.carrying) {
       // when its halo burns, look away before the Toll

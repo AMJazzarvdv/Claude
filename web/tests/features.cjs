@@ -180,6 +180,40 @@ const check = (name, ok, info = '') => results.push(`${ok ? 'PASS' : 'FAIL'}  ${
   });
   check('Running past crows scatters them and makes noise', r.state === 'fly' && r.noise && r.n >= 8, JSON.stringify(r));
 
+  // regressions found in review
+  r = await ev(() => {
+    const G = window.__G, p = G.player, k = G.killer;
+    k.pos.set(p.pos.x + 40, 0, p.pos.z); k.stunT = 999;
+    p.health = 'injured'; p.healProg = 0; p.action = null; G.giveItem(p, 'bandage');
+    p.startAction('bandage'); window.step(5); p.cancelAction();
+    return { prog: +p.healProg.toFixed(2), item: p.item, h: p.health };
+  });
+  check('A cancelled bandage keeps neither its progress nor a free heal', r.prog === 0 && r.item === 'bandage' && r.h === 'injured', JSON.stringify(r));
+  r = await ev(() => {
+    const G = window.__G, p = G.player, k = G.killer;
+    G.consumeItem(p); if (G.candle) { G.candle.dispose(); G.candle = null; }
+    const sp = window.openSpot(); p.pos.set(sp.x, 0, sp.z); p.resolve = p.maxResolve; p.noBlink = 0;
+    k.stunT = 0; k.action = null; k.pos.set(sp.x, 0, sp.z + 6); k.toll = { t: 0.3, dur: 1.8, lost: 0 }; k.tollCD = 0;
+    G.camYaw = 0; G.camPitch = 0; p.yaw = 0; window.step(0.1);
+    const charging = !!k.toll;
+    G.giveItem(p, 'candle'); window.__input.pressed.add('KeyF'); G.update(1 / 30); window.__input.pressed.clear();
+    window.step(0.1);
+    const out = { charging, candle: !!G.nearCandle(k.pos), toll: !!k.toll };
+    k.tollCD = 99; return out;
+  });
+  check('A candle set down mid-charge snuffs the Toll', r.charging && r.candle && !r.toll, JSON.stringify(r));
+  r = await ev(() => {
+    const G = window.__G, k = G.killer, from = k.pos.clone(), to = k.pos.clone().add({ x: 1.8, y: 0, z: 0 });
+    k.stunT = 0; k.action = { type: 'vault', t: 0.75, dur: 1.5, from, to }; k.pos.y = 0.6;
+    k.stun(1, 'holy');
+    return { y: k.pos.y, action: k.action };
+  });
+  check('A stun mid-vault sets the Reliquary back on the ground', r.y === 0 && r.action === null, JSON.stringify(r));
+  r = await ev(() => { const G = window.__G, k = G.killer; k.snapGhost(); return { vis: k.ghost.visible }; });
+  check('The blink afterimage stays hidden until the eyes reopen', r.vis === false, JSON.stringify(r));
+  r = await ev(() => { const G = window.__G, p = G.player; p.canonizing = true; const pts = [G.killer.headPos()]; const seen = window.__see.call(G, p, pts); p.canonizing = false; return { seen }; });
+  check('Your own canonization camera does not hold the statue', r.seen === false, JSON.stringify(r));
+
   // canonization: a twice-bound survivor is turned to stone
   r = await ev(() => {
     const G = window.__G, p = G.player, k = G.killer;
