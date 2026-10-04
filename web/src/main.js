@@ -358,18 +358,54 @@ class Game {
     $('introRealm').textContent = realm.name;
     $('introDiff').textContent = `${this.diff.name} · ${this.weather.rain ? 'Drizzle' : 'Still mist'}`;
     const f = k.forward(), head = k.headPos();
+    const roomy = (p) => W.boxes.every((b) => Math.max(b.minX - p.x, p.x - b.maxX, b.minY - p.y, p.y - b.maxY, b.minZ - p.z, p.z - b.maxZ) > 0.45);
     // a vantage in front of the statue's face with a clear sightline
     let end = null;
     for (const d of [3.4, 4.2, 5.2, 2.6]) for (const da of [0, 0.5, -0.5, 1, -1]) {
       const c = Math.cos(da), sn = Math.sin(da);
       const dir = V(f.x * c - f.z * sn, 0, f.x * sn + f.z * c);
       const p = V(k.pos.x + dir.x * d, 1.9, k.pos.z + dir.z * d);
-      if (!end && W.raycast(p, head) > 0.98) end = p;
+      if (!end && W.raycast(p, head) > 0.98 && roomy(p)) end = p;
     }
     this.introTo = end || V(k.pos.x + f.x * 3.4, 1.9, k.pos.z + f.z * 3.4);
+    // the approach: low over the moor toward its face, kept clear of walls and away from the trees' branches
+    const trees = W.circles.filter((c) => c.h > 2.5);
+    const clearance = (a, b) => {
+      let m = 99;
+      for (let i = 0; i <= 8; i++) {
+        const x = a.x + (b.x - a.x) * i / 8, z = a.z + (b.z - a.z) * i / 8;
+        for (const c of trees) m = Math.min(m, Math.hypot(c.x - x, c.z - z) - c.r);
+      }
+      return m;
+    };
+    // the flight must stay out of every wall: sample the actual curved path (see updateIntro)
+    const at = (from, e) => V(from.x + (this.introTo.x - from.x) * e, from.y + (this.introTo.y - from.y) * e + Math.sin(e * Math.PI) * this.introArc, from.z + (this.introTo.z - from.z) * e);
+    const pathOK = (from) => {
+      let prev = from;
+      for (let i = 1; i <= 16; i++) { const p = at(from, i / 16); if (W.raycast(prev, p) < 0.999 || !roomy(p)) return false; prev = p; }
+      return roomy(from);
+    };
     const back = V(this.introTo.x - k.pos.x, 0, this.introTo.z - k.pos.z).normalize();
-    this.introFrom = V(k.pos.x + back.x * 26 + back.z * 8, 9, k.pos.z + back.z * 26 - back.x * 8);
-    this.introLook0 = V(k.pos.x, 2.5, k.pos.z); this.introLook1 = head.clone().add(V(0, -0.15, 0));
+    let best = null, bestS = -1;
+    for (const [d, y, arc] of [[18, 3.6, 1.2], [22, 3.6, 1.2], [14, 3.0, 0.8], [10, 2.6, 0.4], [7, 2.3, 0]]) {
+      this.introArc = arc;
+      for (let i = 0; i < 12; i++) {
+        const a = (i % 2 ? 1 : -1) * Math.ceil(i / 2) * 0.22;
+        const dir = V(back.x * Math.cos(a) - back.z * Math.sin(a), 0, back.x * Math.sin(a) + back.z * Math.cos(a));
+        const p = V(k.pos.x + dir.x * d, y, k.pos.z + dir.z * d);
+        if (Math.abs(p.x) > HALF - 3 || Math.abs(p.z) > HALF - 3) continue;
+        if (W.raycast(p, head) < 0.98 || !pathOK(p)) continue;
+        const s = Math.min(clearance(p, this.introTo), clearance(p, head) + 0.5) - Math.abs(a) * 0.6;
+        if (s > bestS) { bestS = s; best = { p, arc }; }
+      }
+      if (best) break;
+    }
+    // nowhere to fly in from (it stands in a ruin): ease back from its face instead
+    if (!best) { this.introArc = 0; best = { p: this.introTo.clone().addScaledVector(back, 1.6).setY(this.introTo.y + 0.3), arc: 0 }; if (!roomy(best.p) || W.raycast(best.p, head) < 0.98) best.p = this.introTo.clone(); }
+    this.introFrom = best.p; this.introArc = best.arc;
+    this.introLook0 = V(k.pos.x, 2.2, k.pos.z); this.introLook1 = head.clone().add(V(0, -0.15, 0));
+    this.introFlash = false;
+    RM.setReliquaryLook?.(k.model, 0, 0);
     k.sync(0);
     audio.toll(null, 98, 0.6, 9);
     setTimeout(() => { if (this.state === 'intro') audio.choir(this.killer.headPos(), 3.5, 0.35, 0, 98); }, 3000);
@@ -377,10 +413,20 @@ class Game {
 
   updateIntro(dt) {
     this.introT += dt;
-    const t = clamp(this.introT / (this.introDur - 1.0), 0, 1);
+    const t = clamp(this.introT / (this.introDur - 0.6), 0, 1);
     const e = t * t * (3 - 2 * t);
     camera.position.lerpVectors(this.introFrom, this.introTo, e);
-    camera.position.y += Math.sin(e * Math.PI) * 2;
+    camera.position.y += Math.sin(e * Math.PI) * this.introArc;
+    // lightning: in the flash its head has already turned to look at you
+    if (!this.introFlash && this.introT > 3.9) {
+      this.introFlash = true;
+      const k = this.killer;
+      RM.setReliquaryLook?.(k.model, angDiff(k.yaw, yawTo(k.pos, camera.position)), Math.atan2(camera.position.y - 2.3, Math.max(0.5, flatDist(k.pos, camera.position))));
+      if (this.weather) { this.weather.flashes = [0, 0.14]; this.weather.flashT = 0; }
+      audio.thunder(160);
+      this.hitShake = 0.35;
+    }
+    if (this.introFlash) { this.hitShake = Math.max(0, this.hitShake - dt * 1.5); camera.position.x += (Math.random() - 0.5) * this.hitShake * 0.05; camera.position.y += (Math.random() - 0.5) * this.hitShake * 0.05; }
     const look = this.introLook0.clone().lerp(this.introLook1, Math.min(1, e * 1.4));
     camera.lookAt(look); camera.updateMatrixWorld();
     audio.setListener(camera.position, look.clone().sub(camera.position).normalize());
