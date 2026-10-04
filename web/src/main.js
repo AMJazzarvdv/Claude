@@ -262,6 +262,7 @@ class Game {
 
   setupTitle() {
     this.state = 'title';
+    this.fovKick = 0; camera.fov = 64; camera.updateProjectionMatrix();
     if (!this.world) this.buildWorld(7);
     if (!this.titleStatue) {
       // the title shows it fully ascended
@@ -334,6 +335,7 @@ class Game {
     this.bellsRung = 0; this.bellsRequired = 5; this.gatesPowered = false; this.collapseT = null; this.hookEvents = 0;
     this.noises = []; this.scratches = []; this.time = 0; this.endT = null; this.auraT = 0; this.afterCD = 0; this.auraSrc = '';
     this.score = { objectives: 0, survival: 0, altruism: 0, boldness: 0 }; this.scoreLog = []; this.stareScore = 0;
+    this.fovKick = 0; camera.fov = 64; camera.updateProjectionMatrix();
     this.memorials = []; this.projectiles = []; this.candle = null; this.deaths = 0; this.tollWarnT = -99; this.lookWarn = 0; this.canonYaw = 0;
     this.player.item = null; this.player.itemCharges = 0;
     this.skillT = 3; this.hitShake = 0; this.lastWiggleKey = null; this.escapeCD = 0; this.chase = 0;
@@ -457,7 +459,7 @@ class Game {
 
   onAscend(k, tier) {
     const near = flatDist(k.pos, this.player.pos) < 35;
-    if (near) this.hitShake = Math.max(this.hitShake, 0.5);
+    if (near) { this.hitShake = Math.max(this.hitShake, 0.5); this.fovKick = 9; }
     this.toast(`The Reliquary ascends: ${TIER_NAMES[tier]}`, 'big');
     setTimeout(() => this.toast(tier === 2 ? 'Its halo burns. Hold its gaze too long and it tolls.' : 'It has wings now. It moves faster and Laments sooner.', 'warn'), 2200);
     this.updateTierHud();
@@ -473,7 +475,7 @@ class Game {
       if (flatDist(s.pos, k.pos) > 24 || !this.world.lineOfSight(head, s.eye())) continue;
       if (s.noBlink <= 0) s.forceBlink(0.9);
       s.resolve = Math.max(0, s.resolve - 25);
-      if (s.isPlayer) { this.hitShake = Math.max(this.hitShake, 0.8); this.flash = Math.max(this.flash || 0, 0.7); }
+      if (s.isPlayer) { this.hitShake = Math.max(this.hitShake, 0.8); this.flash = Math.max(this.flash || 0, 0.7); this.fovKick = -7; }
     }
     this.fx.shockwave(k.pos, 24);
     audio.tollRelease(head);
@@ -537,7 +539,7 @@ class Game {
     this.checkAllDone();
   }
   checkAllDone() { if (this.survivors.every((s) => !s.alive) && this.endT === null) this.endT = 2.5; }
-  onHit(s) { if (s.isPlayer) this.hitShake = 1; }
+  onHit(s) { if (s.isPlayer) { this.hitShake = 1; this.fovKick = 7; } }
   onGateOpened() {
     this.toast('A Lychgate swings open', 'good');
     if (this.collapseT === null) { this.collapseT = 120; setTimeout(() => this.toast('The moor is rising — two minutes', 'warn'), 1500); }
@@ -859,6 +861,10 @@ class Game {
     if (k.lament && s.watching) shake += 0.012;
     this.hitShake = Math.max(0, this.hitShake - dt * 2.5);
     camera.position.x += (Math.random() - 0.5) * shake; camera.position.y += (Math.random() - 0.5) * shake;
+    // the view breathes with the action: a touch wider at a sprint, a punch when struck, ascending or tolled
+    this.fovKick -= Math.sign(this.fovKick) * Math.min(Math.abs(this.fovKick), dt * 9);
+    const fov = 64 + (s.alive && s.speed > 3.6 ? 3 : 0) + this.fovKick;
+    if (Math.abs(camera.fov - fov) > 0.01) { camera.fov += (fov - camera.fov) * Math.min(1, dt * (Math.abs(fov - 64) > Math.abs(camera.fov - 64) ? 18 : 5)); camera.updateProjectionMatrix(); }
     camera.lookAt(camera.position.clone().add(look));
     camera.updateMatrixWorld();
     audio.setListener(camera.position, look);

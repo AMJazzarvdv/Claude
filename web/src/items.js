@@ -62,6 +62,7 @@ export class Chest {
     if (by.item) { G.toast('Your hands are already full', 'warn'); return; }
     const id = POOL[Math.floor(Math.random() * POOL.length)];
     G.giveItem(by, id);
+    G.projectiles.push(new ItemReveal(G, this, by, id));
   }
   update(dt) {
     const ud = this.model.userData;
@@ -72,6 +73,46 @@ export class Chest {
       const o = this.opened ? Math.max(0, 0.6 - this.lidA * 0.6 + 0.05) : 0.25 + this.progress * 0.6;
       if (ud.glow.material) ud.glow.material.opacity = o;
     }
+  }
+}
+
+// What the chest gave: it rises out of the coffer turning in its own light,
+// then flies to the survivor's hand (the held copy appears when it lands).
+export class ItemReveal {
+  constructor(G, chest, s, id) {
+    this.G = G; this.s = s; this.t = 0; this.done = false;
+    this.from = chest.pos.clone().setY(0.45); this.top = this.from.clone().setY(1.35);
+    this.hand = new THREE.Vector3();
+    this.model = new THREE.Group(); this.model.position.copy(this.from);
+    this.item = buildItemModel(id, G.M); this.model.add(this.item);
+    this.glow = new THREE.Sprite(G.M.glow.clone()); this.glow.material.color.set(0xffd890); this.glow.material.opacity = 0;
+    this.glow.scale.setScalar(0.7); this.model.add(this.glow);
+    G.scene.add(this.model);
+    if (s.heldModel) s.heldModel.visible = false;
+  }
+  update(dt) {
+    if (this.done) return;
+    this.t += dt;
+    const t = this.t, m = this.model;
+    this.item.rotation.y += dt * (t < 0.8 ? 5 : 9);
+    if (t < 0.8) {
+      const e = 1 - (1 - Math.min(1, t / 0.6)) ** 3;
+      m.position.lerpVectors(this.from, this.top, e); m.position.y += Math.sin(t * 7) * 0.02;
+      m.scale.setScalar(0.5 + e * 0.9);
+    } else {
+      const f = Math.min(1, (t - 0.8) / 0.32), e = f * f;
+      const j = this.s.model.userData.j;
+      (j?.handR || this.s.model).getWorldPosition(this.hand);
+      m.position.lerpVectors(this.top, this.hand, e);
+      m.scale.setScalar(1.4 - e * 0.4);
+    }
+    this.glow.material.opacity = Math.sin(Math.min(1, t / 1.12) * Math.PI) * 0.65;
+    if (t >= 1.12) this.finish();
+  }
+  finish() {
+    this.done = true;
+    this.G.scene.remove(this.model); this.glow.material.dispose();
+    if (this.s.heldModel) this.s.heldModel.visible = true;
   }
 }
 
