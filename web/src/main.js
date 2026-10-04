@@ -16,6 +16,7 @@ import { Killer, Sentinel, Memorial, TIER_NAMES } from './killer.js';
 import { Chest, HolyFlask, Votive, ITEMS, ITEM_ICONS, HOLD, buildItemModel } from './items.js';
 import { Crows } from './crows.js';
 import { Weather } from './weather.js';
+import { Ambient } from './ambient.js';
 import { FX } from './fx.js';
 import { UI, PERKS, portrait } from './ui.js';
 import { clamp } from './noise.js';
@@ -222,6 +223,7 @@ class Game {
     for (const lp of this.world.decorLights) { const g = new THREE.Sprite(this.M.glow); g.scale.set(1.5, 1.5, 1); g.position.copy(lp); this.world.root.add(g); }
     this.crows = new Crows(this, this.world.perches);
     this.weather = new Weather(this, scene, { rain });
+    this.ambient = new Ambient(this);
     this.M.ground.roughness = rain ? 0.55 : 1;
     audio.rain(rain ? 1 : 0);
     // altar candles + shack lanterns
@@ -249,6 +251,7 @@ class Game {
     if (this.killer) { scene.remove(this.killer.model); scene.remove(this.killer.aura); scene.remove(this.killer.cloth); scene.remove(this.killer.ghost); audio.silenceGrind('killer'); }
     for (const pr of this.projectiles) scene.remove(pr.model);
     if (this.weather) { this.weather.dispose(scene); this.weather = null; }
+    if (this.ambient) { this.ambient.dispose(); this.ambient = null; }
     audio.rain(0);
     if (this.world) { this.world.dispose(); if (this.world.sky) scene.remove(this.world.sky); }
     this.survivors = []; this.killer = null; this.sentinels = []; this.hatch = null;
@@ -974,6 +977,7 @@ class Game {
     moon.position.copy(moon.target.position).addScaledVector(W.moonDir, 70);
     this.fx.ambient(dt, camera.position, W.pools);
     this.fx.update(dt);
+    this.ambient?.update(dt);
     if (this.weather) {
       this.weather.update(dt, camera.position);
       const f = this.weather.flash;

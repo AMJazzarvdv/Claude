@@ -938,7 +938,9 @@ function geoArm() {
     const fold = (0.004 + 0.014 * cuff) * (0.5 + 0.5 * Math.sin(a * 5 + 0.7)) + NZ.noise(a * 1.6, 4) * 0.004;
     const y = y0 - cuff * (0.02 + NZ.noise(a * 2.3, 1.9) * 0.025);
     o.x = Math.sin(a) * (r0 + fold); o.y = y; o.z = Math.cos(a) * (r0 + fold) * 0.92;
-    o.ao = j >= 6 ? lerp(0.5, 0.25, sstep(6, 9, j)) : (0.62 + 0.38 * (fold / (0.018 + 1e-6))) * (j === 5 ? 0.8 : 1);
+    // rows 0..5 run down the INSIDE of the bell (smaller radius), rows 6..11 back up the OUTSIDE:
+    // the outside is lit at the cuff and occluded toward the shoulder (under the cape), the inside is dark
+    o.ao = j >= 6 ? (0.62 + 0.38 * (fold / 0.018)) * lerp(1, 0.45, sstep(8, 11, j)) : lerp(0.2, 0.55, sstep(2, 5, j));
     o.u = u * 1.4; o.v = y / 0.6;
     uvArm(o.x, y, o.z, _uvTmp); o.u1 = _uvTmp[0]; o.v1 = _uvTmp[1];
   }, { seam: true });
@@ -1089,6 +1091,9 @@ export function buildReliquary(M, { alive = true } = {}) {
   const haloBroken = addMesh(G.halo.broken, SH.bronze, halo);
   const haloGlow = addMesh(G.halo.glow, haloGlowMat, halo, false, false);
   haloGlow.position.z = -0.014; haloGlow.renderOrder = 2; haloGlow.visible = false;
+  // Born collapsed and only grown to full size by updateReliquaryFX: an aura clone taken at build time keeps
+  // the collapsed scale (copyPose syncs position, rotation and visibility only), so the reveal shows no solid disc.
+  haloGlow.scale.setScalar(1e-4);
   const haloSpin = pivot(halo);
   const haloFull = addMesh(G.halo.full, haloMat, haloSpin);
   const shardsPivot = pivot(halo);
@@ -1231,6 +1236,7 @@ export function updateReliquaryFX(model, fx) {
   const hb = alive && tier >= 2 ? halo : 0;
   R.haloMat.emissiveIntensity = hb * (tier === 3 ? 0.6 : 0.4);
   R.haloGlow.visible = hb > 0.01;
+  if (R.haloGlow.visible && R.haloGlow.scale.x !== 1) R.haloGlow.scale.setScalar(1);
   R.haloGlowMat.color.copy(GOLD).multiplyScalar(hb * (tier === 3 ? 0.22 : 0.14));
   if (tier === 3) {
     R.shardPhase = (R.shardPhase - dt * (0.2 + halo * 0.55)) % TAU;
