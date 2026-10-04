@@ -276,9 +276,15 @@ class Game {
       let clear = W.raycast(cp, look) > 0.97;
       for (const da of [-0.22, 0.22]) clear = clear && W.raycast(V(-4 + Math.cos(a + da) * r, 2.4, Math.sin(a + da) * r), look) > 0.9;
       if (!clear || W.boxes.some((b) => cp.x > b.minX - 4 && cp.x < b.maxX + 4 && cp.z > b.minZ - 4 && cp.z < b.maxZ + 4)) continue;
-      const sp = cp.clone().lerp(look, 0.42); sp.y = 0;
-      const c = W.cellIndex(sp.x, sp.z);
-      if (c < 0 || W.grid[c] !== 0) continue;
+      // the statue close, a little right of centre (clear of the menu), on free ground
+      const fwd = look.clone().sub(cp).setY(0).normalize(), right = V(-fwd.z, 0, fwd.x);
+      let sp = null;
+      for (const [f, side] of [[4.8, 1.0], [5.6, 1.2], [6.4, 1.3], [r * 0.42, 0]]) {
+        const q = cp.clone().addScaledVector(fwd, f).addScaledVector(right, side); q.y = 0;
+        const c = W.cellIndex(q.x, q.z);
+        if (c >= 0 && W.grid[c] === 0 && W.raycast(cp, V(q.x, 1.4, q.z)) > 0.99) { sp = q; break; }
+      }
+      if (!sp) continue;
       this.titleCam = { a, r, statue: sp };
       break search;
     }
