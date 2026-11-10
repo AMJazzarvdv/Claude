@@ -1299,6 +1299,15 @@ q.onchange = () => { settings.quality = q.value; saveSettings(); moon.shadow.map
 inv.onchange = () => { settings.invert = inv.checked; saveSettings(); };
 fpsBox.onchange = () => { settings.showFps = fpsBox.checked; saveSettings(); $('fps').style.display = settings.showFps ? 'block' : 'none'; };
 
+// the desktop app: fullscreen and a way out
+if (window.desktop) {
+  $('quitBtn').hidden = false; $('quitBtn').onclick = () => window.desktop.quit();
+  const fs = $('fullscreen');
+  $('fullscreenRow').hidden = false; fs.checked = !!settings.fullscreen;
+  fs.onchange = () => { settings.fullscreen = fs.checked; saveSettings(); window.desktop.fullscreen(fs.checked); };
+  if (settings.fullscreen) window.desktop.fullscreen(true);
+}
+
 // ------------------------------------------------------------------ boot
 let last = performance.now(), fpsAcc = 0, fpsN = 0, lastStep = last;
 // A host whose window is hidden still has to run the vigil for its guests. Browsers stop

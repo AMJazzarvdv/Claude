@@ -272,6 +272,7 @@
     <button class="btn" data-go="online">Play Online</button>
     <button class="btn ghost" data-go="howto">How to Survive</button>
     <button class="btn ghost" data-go="settings">Settings</button>
+    <button class="btn ghost" id="quitBtn" hidden>Quit to Desktop</button>
   </div>
   <div id="touchNote" hidden>Hollowmoor is played with a keyboard and mouse. Open this page on a computer to keep the vigil.</div>
   <div class="foot">Every model, texture and sound in Hollowmoor is generated in code at load time. Rendered with three.js (MIT). Best with headphones, keyboard &amp; mouse.</div>
@@ -371,6 +372,7 @@
     <div class="setting"><label for="quality">Graphics quality</label><select id="quality"><option value="high">High (bloom, dense grass, soft shadows)</option><option value="low">Low (faster)</option></select></div>
     <div class="setting"><label for="invert">Invert vertical look</label><input type="checkbox" id="invert"></div>
     <div class="setting"><label for="showFps">Show frame rate</label><input type="checkbox" id="showFps"></div>
+    <div class="setting" id="fullscreenRow" hidden><label for="fullscreen">Fullscreen (F11)</label><input type="checkbox" id="fullscreen"></div>
     <p class="muted" style="font-size:12.5px">Quality changes take effect at the start of the next vigil.</p>
     <div class="actions"><button class="btn ghost" data-back>Back</button></div>
   </div>
