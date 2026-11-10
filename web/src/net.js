@@ -11,7 +11,7 @@ const SEATS = 5; // four survivors and the Reliquary
 
 // keys a guest holds (sent as bits) and keys it tapped since its last message (sent as a list)
 const HELD = ['KeyW', 'KeyS', 'KeyA', 'KeyD', 'ShiftLeft', 'KeyC', 'KeyE', 'KeyR', 'KeyF', 'KeyQ'];
-const TAPS = ['Space', 'KeyB', 'KeyF', 'Mouse2', 'KeyA', 'KeyD', 'Mouse0', 'KeyE', 'KeyQ'];
+const TAPS = ['Space', 'KeyB', 'KeyF', 'Mouse2', 'KeyA', 'KeyD', 'Mouse0', 'KeyE', 'KeyQ', 'KeyG'];
 
 // The toll-check dial of a player who is somewhere else: asked over the wire, answered over the wire.
 class RemoteSkill {
@@ -360,6 +360,8 @@ export class Net {
     else if (name === 'lightning') { if (G.weather) { G.weather.flashes = e[1]; G.weather.flashT = 0; } G.lightningSeen(); }
     else if (name === 'crow') G.crows?.scare(e[1], { x: e[2], z: e[3] }, false);
     else if (name === 'heard') G.killerHeardShow?.(e[1], e[2], e[3]);
+    else if (name === 'ping') G.pingShow(e[1], e[2], e[3], e[4]);
+    else if (name === 'scr') { if (priv) G.fxLocal.scratch(e[1], e[2], e[3]); }
     else if (!priv) return;
     else if (name === 'sfx') { if (['itemUse', 'escapeChord'].includes(e[1])) G.audioLocal[e[1]](); }
     else if (name === 'feel') G.feel(G.me, e[1]);

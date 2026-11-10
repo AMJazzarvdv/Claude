@@ -170,6 +170,7 @@ export const SurvivorControl = {
     if (!hold) inp.holdLatch = false;
     if (keys.has('KeyR') && s.health === 'injured') { s.startAction('selfheal'); return; }
     if (pressed.has('KeyB') && !s.blinking) { s.forceBlink(0.3); s.resolve = Math.min(s.maxResolve, s.resolve + 30); }
+    if (pressed.has('KeyG')) this.pingFrom(s, inp);
     if (this.useItem(s, dt, inp)) return;
     inp.promptText = this.promptLine(s, cand);
 

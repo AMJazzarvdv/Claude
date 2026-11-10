@@ -82,22 +82,39 @@ function getCrackTex() {
   return crackTex;
 }
 
-// Fading cracked footprints the Reliquary leaves wherever it moved unseen.
+// Claw-like streaks a sprinting survivor leaves behind (only the Reliquary's player sees them).
+let scratchTex = null;
+function getScratchTex() {
+  if (scratchTex) return scratchTex;
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const g = c.getContext('2d');
+  g.lineCap = 'round';
+  for (const [x, w, l] of [[20, 5, 40], [32, 6, 48], [44, 4.5, 36]]) {
+    const grd = g.createLinearGradient(0, 32 - l / 2, 0, 32 + l / 2);
+    grd.addColorStop(0, 'rgba(255,255,255,0)'); grd.addColorStop(0.5, 'rgba(255,255,255,1)'); grd.addColorStop(1, 'rgba(255,255,255,0)');
+    g.strokeStyle = grd; g.lineWidth = w;
+    g.beginPath(); g.moveTo(x - 2, 32 - l / 2); g.quadraticCurveTo(x + 3, 32, x - 1, 32 + l / 2); g.stroke();
+  }
+  scratchTex = new THREE.CanvasTexture(c);
+  return scratchTex;
+}
+
+// Fading decals on the ground: the cracked footprints the Reliquary leaves, and scratch marks.
 class CrackDecals {
-  constructor(scene, cap = 72) {
+  constructor(scene, cap = 72, { tex = getCrackTex(), life = 14, tint = 0xffffff, additive = false } = {}) {
     this.cap = cap; this.i = 0; this.time = 0;
     const geo = new THREE.PlaneGeometry(1, 1); geo.rotateX(-Math.PI / 2);
     this.birth = new Float32Array(cap).fill(-999);
     geo.setAttribute('aBirth', new THREE.InstancedBufferAttribute(this.birth, 1));
     const mat = new THREE.ShaderMaterial({
-      transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2,
-      uniforms: { tex: { value: getCrackTex() }, uTime: { value: 0 }, uLife: { value: 14 }, fogColor: { value: scene.fog ? scene.fog.color : new THREE.Color(0x464e5c) }, fogDensity: { value: scene.fog ? scene.fog.density : 0.03 } },
+      transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
+      uniforms: { tex: { value: tex }, uTint: { value: new THREE.Color(tint) }, uTime: { value: 0 }, uLife: { value: life }, fogColor: { value: scene.fog ? scene.fog.color : new THREE.Color(0x464e5c) }, fogDensity: { value: scene.fog ? scene.fog.density : 0.03 } },
       vertexShader: `attribute float aBirth; varying vec2 vUv; varying float vA; varying float vFog; uniform float uTime, uLife, fogDensity;
         void main(){ vUv = uv; float age = uTime - aBirth; vA = clamp(1.0 - age / uLife, 0.0, 1.0) * clamp(age * 4.0, 0.0, 1.0);
           vec4 mv = modelViewMatrix * instanceMatrix * vec4(position, 1.0); gl_Position = projectionMatrix * mv;
           float d = -mv.z; vFog = 1.0 - exp(-fogDensity * fogDensity * d * d); }`,
-      fragmentShader: `uniform sampler2D tex; uniform vec3 fogColor; varying vec2 vUv; varying float vA; varying float vFog;
-        void main(){ vec4 t = texture2D(tex, vUv); float a = t.a * vA * (1.0 - vFog); if (a < 0.01) discard; gl_FragColor = vec4(t.rgb, a); }`,
+      fragmentShader: `uniform sampler2D tex; uniform vec3 fogColor, uTint; varying vec2 vUv; varying float vA; varying float vFog;
+        void main(){ vec4 t = texture2D(tex, vUv); float a = t.a * vA * (1.0 - vFog); if (a < 0.01) discard; gl_FragColor = vec4(t.rgb * uTint, a); }`,
     });
     this.mat = mat;
     this.mesh = new THREE.InstancedMesh(geo, mat, cap);
@@ -148,6 +165,7 @@ export class FX {
     this.soft = new Pool(scene, T.dust, 1600, THREE.NormalBlending);
     this.glow = new Pool(scene, T.glow, 300, THREE.AdditiveBlending, 1);
     this.cracks = new CrackDecals(scene);
+    this.marks = new CrackDecals(scene, 160, { tex: getScratchTex(), life: 9, tint: 0xff3a1c, additive: true });
     this.waves = new Shockwaves(scene);
     this.wispT = 0; this.ashT = 0;
   }
@@ -165,6 +183,7 @@ export class FX {
     for (let k = 0; k < 60; k++) this.soft.emit({ x: p.x + rv(2), y: 0.2 + Math.random() * 2.5, z: p.z + rv(2) }, { x: rv(0.4), y: 0.6 + Math.random(), z: rv(0.4) }, C(0.03, 0.03, 0.03), 0.3 + Math.random() * 0.4, 2 + Math.random() * 2, -0.1, 0.3, 0.8);
   }
   crack(x, z, yaw, size = 0.9) { this.cracks.add(x, z, yaw, size); }
+  scratch(x, z, yaw) { this.marks.add(x + (Math.random() - 0.5) * 0.5, z + (Math.random() - 0.5) * 0.5, yaw + (Math.random() - 0.5) * 0.5, 0.55 + Math.random() * 0.25); }
   shockwave(pos, radius, color) { this.waves.fire(pos, radius, color); this.dust(pos.clone ? pos.clone().setY(0.4) : pos, 40); }
   debris(p) {
     for (let k = 0; k < 50; k++) this.soft.emit({ x: p.x + rv(0.8), y: 0.4 + Math.random() * 2, z: p.z + rv(0.8) }, { x: rv(6), y: 1 + Math.random() * 4, z: rv(6) }, C(0.38, 0.37, 0.35), 0.06 + Math.random() * 0.1, 1.4 + Math.random(), 9, 0.3, 1);
@@ -187,6 +206,6 @@ export class FX {
       if (pl) this.glow.emit({ x: pl.x + rv(pl.r * 2), y: 0.3 + Math.random() * 1.2, z: pl.z + rv(pl.r * 2) }, { x: rv(0.3), y: 0.05 + Math.random() * 0.1, z: rv(0.3) }, C(0.35, 0.5, 0.75), 0.15 + Math.random() * 0.1, 4 + Math.random() * 3, 0, 0.1, 0.7);
     }
   }
-  update(dt) { this.soft.update(dt); this.glow.update(dt); this.cracks.update(dt); this.waves.update(dt); }
-  clear() { this.soft.clear(); this.glow.clear(); this.cracks.clear(); }
+  update(dt) { this.soft.update(dt); this.glow.update(dt); this.cracks.update(dt); this.waves.update(dt); this.marks.update(dt); }
+  clear() { this.soft.clear(); this.glow.clear(); this.cracks.clear(); this.marks.clear(); }
 }

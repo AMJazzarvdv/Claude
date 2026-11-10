@@ -110,6 +110,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('A private message is not shown to others', r.includes('A line for everyone') && !r.includes('A line for the guest'), r);
   await H.evaluate(() => window.__G.survivors[2].hit());
   check('A hit on the guest shows on the guest: wounded, with the jolt', await until(C, () => window.__G.player.health === 'injured' && window.__G.hitShake > 0, null, 6000), await C.evaluate(() => ({ h: window.__G.player.health, shake: window.__G.hitShake })));
+  // pointing something out
+  await C.evaluate(() => window.__input.pressed.add('KeyG'));
+  check('The guest pings a spot; both players see the mark', (await until(H, () => (window.__G.teamPings || []).length > 0, null, 5000)) && (await until(C, () => (window.__G.teamPings || []).length > 0 && document.querySelectorAll('#markers i.tping').length > 0, null, 5000)));
   // an item from a chest
   await H.evaluate(() => { const G = window.__G; G.giveItem(G.survivors[2], 'mirror'); });
   check('An item given on the host appears in the guest\'s hand and HUD', await until(C, () => window.__G.player.item === 'mirror' && !document.getElementById('itemSlot').hidden && !!window.__G.player.heldModel, null, 6000));
@@ -128,6 +131,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check('The vigil ends for both with results and scores', ended && r.v === 'ESCAPED' && r.btn === 'Return to the Lobby' && Number(r.total.replace(/\D/g, '')) >= 5000, r);
     await H.click('#againBtn');
     check('The host returns to the room and brings the guest', (await until(H, () => document.getElementById('lobby').classList.contains('on'))) && (await until(C, () => document.getElementById('lobby').classList.contains('on') && window.__G.state === 'title', null, 10000)));
+    // a second vigil from the same room
+    await C.click('#lobbyGo');
+    await until(H, () => window.__net.canStart(), null, 8000);
+    await H.click('#lobbyGo');
+    check('A second vigil starts from the same room', (await inGame(H)) && (await inGame(C)) && (await C.evaluate(() => window.__G.mode === 'client' && window.__G.survivors.length === 4)));
     await H.close();
     check('When the host leaves, the guest is told and returns to the menu', await until(C, () => document.getElementById('online').classList.contains('on') && /host left/i.test(document.getElementById('onlineStatus').textContent), null, 10000), await C.evaluate(() => document.getElementById('onlineStatus').textContent));
   }

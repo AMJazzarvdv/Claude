@@ -250,7 +250,7 @@ export const KillerControl = {
       if (behind) { x = -x; y = -y; }
       const off = behind || Math.abs(x) > 0.94 || Math.abs(y) > 0.9;
       if (off) { const s = Math.max(Math.abs(x) / 0.94, Math.abs(y) / 0.9) || 1; x /= s; y /= s; if (behind) { const n = Math.hypot(x, y) || 1; x = x / n * 0.94; y = y / n * 0.9; } }
-      el.style.display = 'block';
+      el.style.display = off && m.hideOff ? 'none' : 'block';
       el.className = m.cls + (off ? ' off' : '');
       el.textContent = m.text;
       el.style.transform = `translate(${((x * 0.5 + 0.5) * innerWidth).toFixed(1)}px, ${((-y * 0.5 + 0.5) * innerHeight).toFixed(1)}px)`;

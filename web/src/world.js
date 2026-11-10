@@ -431,6 +431,23 @@ export class World {
     }
   }
 
+  // Bark that leans with the wind: more the higher up the tree, each tree in its own time.
+  treeMaterial() {
+    if (this._treeMat) return this._treeMat;
+    const mat = this._treeMat = this.M.bark.clone();
+    this.windUniforms = { uTime: { value: 0 } };
+    mat.onBeforeCompile = (sh) => {
+      sh.uniforms.uTime = this.windUniforms.uTime;
+      sh.vertexShader = 'uniform float uTime;\n' + sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
+        vec4 tp = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+        float th = max(position.y, 0.0);
+        float sw = (sin(uTime * 0.7 + tp.x * 0.35 + tp.z * 0.21) + 0.45 * sin(uTime * 1.9 + tp.x * 1.3)) * th * th * 0.0028;
+        transformed.x += sw; transformed.z += sw * 0.6;`);
+    };
+    mat.customProgramCacheKey = () => 'hollowmoor-tree-sway';
+    return mat;
+  }
+
   buildTrees() {
     const R = this.rnd;
     const variants = [treeGeometry(11), treeGeometry(23), treeGeometry(37), treeGeometry(51)];
@@ -456,7 +473,7 @@ export class World {
     }
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion();
     lists.forEach((list, v) => {
-      const im = new THREE.InstancedMesh(variants[v], this.M.bark, list.length);
+      const im = new THREE.InstancedMesh(variants[v], this.treeMaterial(), list.length);
       list.forEach((t, i) => { q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), t.r); m4.compose(new THREE.Vector3(t.x, 0, t.z), q, new THREE.Vector3(t.s, t.s, t.s)); im.setMatrixAt(i, m4); });
       im.castShadow = true; im.receiveShadow = true;
       this.root.add(im);

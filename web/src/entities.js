@@ -355,7 +355,7 @@ export class Survivor {
     if (this.action) this.updateAction(dt);
 
     // scratch marks while sprinting
-    if (this.speed > 3.2) { this.scratchT -= dt; if (this.scratchT < 0) { this.scratchT = 0.35; G.scratches.push({ x: this.pos.x, z: this.pos.z, t: G.time, s: this }); } }
+    if (this.speed > 3.2) { this.scratchT -= dt; if (this.scratchT < 0) { this.scratchT = 0.35; G.scratches.push({ x: this.pos.x, z: this.pos.z, t: G.time, s: this }); G.onScratch(this); } }
     this.visual(dt);
   }
 

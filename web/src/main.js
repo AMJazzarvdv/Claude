@@ -106,6 +106,10 @@ const GradeShader = {
       float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
       c = mix(c, vec3(l), 0.22 + uHurt * 0.2 + uLow * 0.2);
       c *= vec3(0.93, 0.99, 1.08);
+      // a little film: cold shadows, a warmer shoulder, slightly deeper blacks
+      c += vec3(-0.004, 0.001, 0.006) * (1.0 - smoothstep(0.0, 0.12, l));
+      c += vec3(0.012, 0.005, -0.006) * smoothstep(0.18, 0.6, l);
+      c = mix(c, c * c * (3.0 - 2.0 * c) , 0.12 * (1.0 - smoothstep(0.0, 1.0, l)));
       c += vec3(0.7, 0.78, 1.0) * uFlash * (0.2 + l * 2.0);
       float r = length(d * vec2(uAspect, 1.0));
       c = mix(c, c * vec3(1.7, 0.45, 0.3), smoothstep(0.3, 0.95, r) * uWarn);
@@ -170,6 +174,7 @@ addEventListener('mousemove', (e) => {
 canvas.addEventListener('mousedown', (e) => {
   if (e.button === 0) { localInput.mouseDown = true; pressed.add('Mouse0'); }
   if (e.button === 2) { localInput.rightDown = true; pressed.add('Mouse2'); }
+  if (e.button === 1) { pressed.add('KeyG'); e.preventDefault(); }
   if (game?.state === 'intro') game.endIntro();
   if (game?.state === 'playing' && !game.menu && !document.pointerLockElement && !noLock) lock();
 });
@@ -195,7 +200,7 @@ const audio = new AudioEngine();
 const ui = new UI(audio);
 let game = null;
 
-const tmpV = new THREE.Vector3();
+const tmpV = new THREE.Vector3(), tmpV2 = new THREE.Vector3();
 
 class Game {
   constructor(T, M) {
@@ -382,7 +387,7 @@ class Game {
     ui.clearToasts();
     $('fps').style.display = settings.showFps ? 'block' : 'none';
     document.body.classList.toggle('as-killer', this.role === 'killer');
-    $('killerHud').hidden = this.role !== 'killer'; this.pings = []; this.killerSeen = false;
+    $('killerHud').hidden = this.role !== 'killer'; this.pings = []; this.teamPings = []; this.killerSeen = false;
     ui.show('loading', false);
     this.updateItemHud(); this.updateTierHud();
     net?.onMatchBuilt();
@@ -624,6 +629,32 @@ class Game {
   noise(pos, r, type) {
     this.noises.push({ pos: pos.clone(), r, type, t: this.time }); if (this.noises.length > 40) this.noises.shift();
     this.killerHeard?.(pos, r, type);
+  }
+  // someone sprinted: the Reliquary's player (and nobody else) sees the marks they leave
+  onScratch(s) {
+    const k = this.killer;
+    if (!k || !k.human) return;
+    if (k === this.me) this.fxLocal.scratch(s.pos.x, s.pos.z, s.yaw);
+    else if (k.peer) this.net?.eventTo(k.peer, 'scr', Math.round(s.pos.x * 10) / 10, Math.round(s.pos.z * 10) / 10, Math.round(s.yaw * 10) / 10);
+  }
+  // A Mourner points something out to the others (G or middle mouse): a mark where they are looking.
+  pingFrom(s, inp) {
+    if (this.time - (s.pingT || -9) < 1.2) return;
+    s.pingT = this.time;
+    const v = s.view, from = v && v.ready ? v.cam.position : s.eye();
+    const to = inp.lookDir(V()).multiplyScalar(45).add(from);
+    const t = this.world.raycast(from, to);
+    const p = V().lerpVectors(from, to, Math.max(0.02, t - 0.01));
+    if (p.y < 0.1) { const f = (from.y - 0.1) / Math.max(0.001, from.y - to.y); p.lerpVectors(from, to, Math.min(t, f)); }
+    const si = this.survivors.indexOf(s);
+    this.pingShow(si, p.x, p.y, p.z);
+    this.net?.event('ping', si, Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10, Math.round(p.z * 10) / 10);
+  }
+  pingShow(si, x, y, z) {
+    if (this.role !== 'survivor') return;
+    (this.teamPings || (this.teamPings = [])).push({ si, x, y, z, t: performance.now() });
+    if (this.teamPings.length > 6) this.teamPings.shift();
+    this.audioLocal.chime(V(x, y, z), 990, 0.18);
   }
   addScore(s, cat, amt, label) { if (!s || !s.score) return; s.score[cat] = (s.score[cat] || 0) + amt; if (label) s.scoreLog.push(`${label} +${amt}`); }
   get promptText() { return localInput.promptText; }
@@ -983,6 +1014,21 @@ class Game {
     u.uFade.value = 1 - this.fadeIn;
     if (this.endT !== null) { this.endT -= dt; u.uFade.value = Math.max(u.uFade.value, clamp(1 - this.endT / 2.5, 0, 1)); if (this.endT <= 0) this.showEnd(); }
 
+    // marks on screen: what teammates pointed at, and who is who when you can see them
+    {
+      const marks = [], now = performance.now();
+      if (this.teamPings) {
+        this.teamPings = this.teamPings.filter((m) => now - m.t < 5000);
+        for (const m of this.teamPings) marks.push({ x: m.x, y: m.y + 0.2, z: m.z, cls: 'tping', text: (this.survivors[m.si]?.def.short || '?')[0] });
+      }
+      if (this.mode !== 'solo') for (const s of this.survivors) {
+        if (s === p || !s.alive || !s.playerName || s.health === 'carried') continue;
+        const head = tmpV2.set(s.pos.x, s.pos.y + (s.health === 'downed' ? 0.7 : s.crouch ? 1.35 : 1.95), s.pos.z);
+        if (camera.position.distanceTo(head) > 30 || this.world.raycast(camera.position, head) < 0.995) continue;
+        marks.push({ x: head.x, y: head.y, z: head.z, cls: 'tag', text: s.playerName, hideOff: true });
+      }
+      this.drawMarks(marks);
+    }
     if (this.spectate) ui.prompt(`Watching ${this.spectate.playerName || this.spectate.def.short}&nbsp;&nbsp;&nbsp;<kbd>Space</kbd> next&nbsp;&nbsp;&nbsp;<kbd>Esc</kbd> leave`, null, false);
     else ui.prompt(localInput.promptText, localInput.promptProg, localInput.promptHeal);
     $('wiggle').style.display = p.health === 'carried' ? 'block' : 'none';
@@ -993,6 +1039,7 @@ class Game {
   updateAmbient(dt) {
     const W = this.world; if (!W) return;
     W.grassUniforms.uTime.value = this.time;
+    if (W.windUniforms) W.windUniforms.uTime.value = this.time;
     W.mistUniforms.uTime.value = this.time;
     W.mistUniforms.uCam.value.copy(camera.position);
     W.sky.material.uniforms.uTime.value = this.time;
@@ -1386,6 +1433,7 @@ async function boot() {
   window.__G = game;
   window.__R = { renderer, scene, hemi, moon, get grade() { return grade; }, get bloom() { return bloom; }, camera };
   window.__input = { keys, pressed }; // used by the headless tests
+  window.__renderOnce = () => { grade.uniforms.uTime.value = performance.now() / 1000; composer.render(); renderMirror(); }; // one picture on demand (with __noRender)
   game.setupTitle();
   // warm up shaders before the curtain lifts
   camera.position.set(10, 4, 20); camera.lookAt(0, 2, 0);

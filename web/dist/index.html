@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Hollowmoor</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=Inter:wght@400;500;600&display=swap">
+<!-- web fonts load without holding up the page; offline (the desktop app) the fallbacks below are used -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=Inter:wght@400;500;600&display=swap" media="print" onload="this.media='all'">
 <style>
   /* Layout: full-bleed WebGL moor with menus as slabs of dark stone over it. Single dark look by design. */
   :root {
@@ -249,6 +250,9 @@
   #markers i.bound { width: 12px; height: 12px; margin: -6px 0 0 -6px; background: var(--blood-hi); }
   #markers i.post { width: 14px; height: 14px; margin: -7px 0 0 -7px; border: 2px solid var(--blood-hi); }
   #markers i.off { opacity: 0.6; scale: 0.8; }
+  #markers i.tping { background: #9fd0ff; box-shadow: 0 0 10px rgba(140,200,255,0.9); animation: pingPulse 1s infinite; }
+  .seat .who.bot { color: var(--muted); }
+  #markers i.tag { width: auto; height: auto; margin: 0; translate: -50% -100%; padding: 1px 7px; border-radius: 2px; background: rgba(0,0,0,0.45); color: var(--bone); font: 600 11px/16px Inter, system-ui, sans-serif; letter-spacing: 0.06em; white-space: nowrap; }
   body.as-killer #resolve, body.as-killer #perkHud, body.as-killer #itemSlot, body.as-killer #wiggle { display: none !important; }
   @media (prefers-reduced-motion: reduce) { #markers i.ping { animation: none; } }
   @media (prefers-reduced-motion: reduce) { .toast, .srow.hooked .ring, #tierPips i.on, #itemSlot, .results > * { animation: none !important; } }
@@ -358,6 +362,7 @@
       <tr><td><kbd>R</kbd> (hold): mend your own wounds</td><td><kbd>B</kbd> blink on purpose (restores Resolve)</td></tr>
       <tr><td><kbd>A</kbd>/<kbd>D</kbd> alternate: wiggle free when carried</td><td><kbd>Space</kbd> on a post: try to tear free (first binding)</td></tr>
       <tr><td><kbd>F</kbd> or <kbd>Right Mouse</kbd>: use your item (hold for the mirror)</td><td>Walking backward keeps your eyes on it, but it's slow</td></tr>
+      <tr><td><kbd>G</kbd> or <kbd>Middle Mouse</kbd> (online): point something out to the others</td><td><kbd>F11</kbd> fullscreen (desktop app)</td></tr>
       <tr><td><kbd>Esc</kbd> pause</td><td><kbd>Space</kbd> skip the opening</td></tr>
     </table>
     <div class="actions"><button class="btn ghost" data-back>Back</button></div>
