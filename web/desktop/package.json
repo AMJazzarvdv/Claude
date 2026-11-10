@@ -11,6 +11,7 @@
     "prepare-app": "node prepare.mjs",
     "start": "npm run prepare-app && electron .",
     "pack:win": "npm run prepare-app && electron-packager . Hollowmoor --platform=win32 --arch=x64 --out=out --overwrite --asar --icon=build/icon.ico --ignore=\"^/(out|build|prepare\\.mjs|README\\.md)\" --app-copyright=\"Hollowmoor\"",
+    "pack:mac": "npm run prepare-app && electron-packager . Hollowmoor --platform=darwin --arch=arm64 --out=out --overwrite --asar --icon=build/icon.icns --app-bundle-id=moor.hollow.game --app-category-type=public.app-category.games --ignore=\"^/(out|build|prepare\\.mjs|README\\.md)\"",
     "pack:linux": "npm run prepare-app && electron-packager . Hollowmoor --platform=linux --arch=x64 --out=out --overwrite --asar --ignore=\"^/(out|build|prepare\\.mjs|README\\.md)\"",
     "dist": "npm run prepare-app && electron-builder --publish never"
   },

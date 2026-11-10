@@ -8,6 +8,7 @@ cd desktop && npm install
 npm start                                   # run it
 npm run pack:win                            # out/Hollowmoor-win32-x64/Hollowmoor.exe
 npm run pack:linux                          # out/Hollowmoor-linux-x64/Hollowmoor
+npm run pack:mac                            # out/Hollowmoor-darwin-arm64/Hollowmoor.app (Apple Silicon, unsigned)
 npm run dist                                # installers for the system you are on (electron-builder)
 ```
 
@@ -15,4 +16,11 @@ npm run dist                                # installers for the system you are 
 
 To have the app find your game server without typing its address, put the address in `web/server-url.txt` before `npm run build` (see [../server/README.md](../server/README.md)).
 
-The Windows and Linux builds can be made on any system. A signed macOS build has to be made on a Mac.
+The Windows, Linux and (unsigned) macOS builds can be made on any system. A signed, notarized macOS build has to be made on a Mac with an Apple developer account.
+
+An unsigned Mac build is blocked by macOS until you clear it once in Terminal:
+
+```sh
+xattr -cr /Applications/Hollowmoor.app
+codesign --force --deep --sign - /Applications/Hollowmoor.app
+```

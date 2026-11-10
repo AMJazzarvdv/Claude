@@ -36,7 +36,12 @@ if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
   app.whenReady().then(() => {
-    Menu.setApplicationMenu(null);
+    // Windows and Linux: no menu bar. macOS: the standard menus, so Cmd+Q, Cmd+H and fullscreen work as expected.
+    Menu.setApplicationMenu(process.platform !== 'darwin' ? null : Menu.buildFromTemplate([
+      { label: 'Hollowmoor', submenu: [{ role: 'about' }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
+      { label: 'View', submenu: [{ role: 'togglefullscreen' }] },
+      { label: 'Window', submenu: [{ role: 'minimize' }, { role: 'front' }] },
+    ]));
     protocol.handle('app', (request) => {
       const url = new URL(request.url);
       const file = path.normalize(path.join(ROOT, decodeURIComponent(url.pathname)));
