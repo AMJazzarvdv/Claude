@@ -6,7 +6,7 @@ const results = [];
 const check = (name, ok, info = '') => results.push(`${ok ? 'PASS' : 'FAIL'}  ${name} ${info}`);
 
 (async () => {
-  const browser = await chromium.launch({ executablePath: process.env.CHROME || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+  const browser = await chromium.launch({ executablePath: process.env.CHROME || undefined, args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
   const page = await browser.newPage({ viewport: { width: 800, height: 450 } });
   page.on('pageerror', (e) => results.push('pageerror: ' + e.message + ' ' + (e.stack || '').split('\n')[1]));
   await page.goto(BASE + '/index.html', { waitUntil: 'domcontentloaded' });

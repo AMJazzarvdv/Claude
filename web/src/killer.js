@@ -184,10 +184,10 @@ export class Killer {
     if (why === 'pallet') this.G.toast('The Reliquary is stunned', 'good');
   }
 
-  veil() {
+  veil(by) {
     this.veilT = 5; this.cloth.visible = true;
     this.stun(5, 'veil');
-    this.G.toast('You veiled the Reliquary', 'good');
+    this.G.toast(by ? `${by.def.short} veiled the Reliquary` : 'The Reliquary is veiled', 'good');
   }
 
   dropCarried(wiggled) {
@@ -197,7 +197,7 @@ export class Killer {
     s.pos.copy(this.pos).addScaledVector(this.forward(), 0.9); s.pos.y = 0;
     this.G.world.collide(s.pos, 0.32);
     s.boost = 2; s.immune = 0;
-    if (wiggled) { this.stunT = Math.max(this.stunT, 3); this.G.toast(`${s.name} wriggled free`, 'good'); if (s.isPlayer) this.G.addScore('survival', 1200, 'Wiggled free'); }
+    if (wiggled) { this.stunT = Math.max(this.stunT, 3); this.G.toast(`${s.name} wriggled free`, 'good'); this.G.addScore(s, 'survival', 1200, 'Wiggled free'); }
   }
 
   // ---------------------------------------------------------------- perception
@@ -222,7 +222,6 @@ export class Killer {
     this.petrified = this.watchers > 0;
     if (this.petrified) {
       this.frozenT += dt * (1 + (this.watchers - 1) * 0.5); this.unwatchedT = 0;
-      if (!was && flatDist(G.player.pos, this.pos) < 14) G.audio.settle(this.pos.clone().setY(1.2));
     } else {
       this.unwatchedT += dt;
       if (this.unwatchedT > 2.5) this.frozenT = 0;
@@ -259,12 +258,6 @@ export class Killer {
       }
     }
     this.tolledT = Math.max(0, (this.tolledT || 0) - dt);
-    // the afterimage appears once the player's eyes reopen
-    if (this.ghostPending && !G.player.blinking) {
-      this.ghostPending = false;
-      if (flatDist(this.pos, this.ghostPos) > 1.2) { this.ghost.visible = true; this.ghostT = 1.6; }
-    }
-    if (this.ghostT > 0) { this.ghostT -= dt; this.ghostMat.opacity = 0.34 * Math.max(0, this.ghostT / 1.6); if (this.ghostT <= 0) this.ghost.visible = false; }
 
     // a canonize target that was revived (or died) frees the stone at once, watched or not
     if (this.action?.type === 'canonize' && this.action.target.health !== 'downed') { this.action.target.endCanonize(false); this.action = null; }
@@ -272,9 +265,12 @@ export class Killer {
     if (this.stunT > 0) { this.stunT -= dt; this.sync(dt); return; }
     if (this.petrified) { this.sync(dt); return; }
 
-    this.thinkT -= dt;
-    if (this.thinkT <= 0) { this.thinkT = 0.25; this.think(); }
-    this.act(dt);
+    if (this.input) G.killerControl(this, dt, this.input);
+    else {
+      this.thinkT -= dt;
+      if (this.thinkT <= 0) { this.thinkT = 0.25; this.think(); }
+      this.act(dt);
+    }
     this.choosePose();
     this.sync(dt);
   }
@@ -570,8 +566,19 @@ export class Killer {
     if (s) setLook(this.model, angDiff(this.yaw, yawTo(this.pos, s.pos)), Math.atan2(s.eye().y - 2.3, Math.max(0.5, flatDist(s.pos, this.pos))));
   }
 
+  // Presentation: runs on every machine from the (replicated) state.
   sync(dt) {
     const G = this.G, m = this.model;
+    // the click of stone settling when a gaze catches it, for those close enough to hear
+    if (this.petrified && !this._wasPet && flatDist(G.viewPos(), this.pos) < 14) G.audioLocal.settle(this.pos.clone().setY(1.2));
+    this._wasPet = this.petrified;
+    // the afterimage appears once your eyes reopen
+    const me = G.player;
+    if (this.ghostPending && !(me && me.blinking)) {
+      this.ghostPending = false;
+      if (flatDist(this.pos, this.ghostPos) > 1.2) { this.ghost.visible = true; this.ghostT = 1.6; }
+    }
+    if (this.ghostT > 0) { this.ghostT -= dt; this.ghostMat.opacity = 0.34 * Math.max(0, this.ghostT / 1.6); if (this.ghostT <= 0) this.ghost.visible = false; }
     m.position.copy(this.pos); m.rotation.y = this.yaw;
     this.circle.x = this.pos.x; this.circle.z = this.pos.z;
     this.cloth.position.copy(this.pos);
@@ -590,10 +597,10 @@ export class Killer {
     } else {
       m.userData.relic.material.color.setRGB(0.55 * pulse * (this.lament ? 1.8 : 1), 0.11 * pulse, 0.02 * pulse);
     }
-    const loud = G.player.hasPerk('stonehearing') ? 1.7 : 1;
-    G.audio.grind('killer', this.pos.clone().setY(0.6), this.moving ? Math.min(1, this.speed / 5) * loud : 0);
-    const dP = flatDist(G.player.pos, this.pos);
-    G.audio.whisper('killer', this.headPos(), !this.petrified && G.player.alive && dP < 13 ? (1 - dP / 13) * loud : 0);
+    const loud = me && me.hasPerk('stonehearing') ? 1.7 : 1;
+    G.audioLocal.grind('killer', this.pos.clone().setY(0.6), this.moving ? Math.min(1, this.speed / 5) * loud : 0);
+    const dP = flatDist(G.viewPos(), this.pos);
+    G.audioLocal.whisper('killer', this.headPos(), me && !this.petrified && me.alive && dP < 13 ? (1 - dP / 13) * loud : 0);
     if (this.aura.visible) { this.aura.position.copy(m.position); this.aura.rotation.copy(m.rotation); copyPose(m, this.aura); }
   }
 }

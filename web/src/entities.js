@@ -36,13 +36,15 @@ export class Bell {
     }
     return best;
   }
-  update(dt) {
-    const G = this.G, n = this.ringers.size, ud = this.model.userData, t = G.time;
+  update(dt) { this.tick(dt); this.visual(dt); }
+  tick(dt) {
+    const G = this.G, n = this.ringers.size;
+    this.nRing = n;
     if (!this.done) {
       if (n > 0) {
         const eff = [0, 1, 1.65, 2.1, 2.45][Math.min(n, 4)];
         let rate = (eff / (G.diff?.bellTime ?? 72)) * G.bellRateMult();
-        if (n === 1) { const s = [...this.ringers][0]; if (s.hasPerk('ropeburn')) rate *= 1.15; if (!s.isPlayer) rate *= 0.92; }
+        if (n === 1) { const s = [...this.ringers][0]; if (s.hasPerk('ropeburn')) rate *= 1.15; if (!s.human) rate *= 0.92; }
         this.progress += rate * dt; this.regress = false;
         this.creakT -= dt; if (this.creakT < 0) { this.creakT = 1.3; G.audio.creak(this.pos.clone().setY(2), 0.35); }
         if (Math.random() < dt * 0.4) G.noise(this.pos, 26, 'bell');
@@ -55,6 +57,10 @@ export class Bell {
       if (ms < this.milestone) this.milestone = ms;
       if (this.progress >= 1) this.complete();
     }
+  }
+  // swing, candles and light: runs on every machine from the replicated state
+  visual(dt) {
+    const G = this.G, n = this.nRing || 0, ud = this.model.userData, t = G.time;
     if (this.done) this.doneSwing = Math.max(0.04, this.doneSwing - dt * 0.06);
     const amp = this.done ? this.doneSwing : (n > 0 ? 0.13 + this.progress * 0.08 : 0) + (this.regress ? 0.02 : 0);
     ud.swing.rotation.z = Math.sin(t * 2.6) * amp;
@@ -70,8 +76,7 @@ export class Bell {
   }
   complete() {
     this.done = true; this.progress = 1; this.doneSwing = 0.7;
-    if (this.ringers.has(this.G.player)) this.G.addScore('objectives', 300, 'Bell rung');
-    for (const r of [...this.ringers]) r.cancelAction();
+    for (const r of [...this.ringers]) { this.G.addScore(r, 'objectives', 300, 'Bell rung'); r.cancelAction(); }
     this.ringers.clear();
     this.G.audio.toll(this.pos.clone().setY(3), 196 * (0.9 + this.id * 0.04), 0.9, 8);
     this.G.onBellRung(this);
@@ -107,7 +112,7 @@ export class Pallet {
     const k = G.killer;
     if (k && this.lateral(k.pos) < this.w / 2 + 0.7 && this.normalDist(k.pos) < 1.3) {
       k.stun(2.4, 'pallet');
-      if (by?.isPlayer) G.addScore('boldness', 1000, 'Pallet stun');
+      G.addScore(by, 'boldness', 1000, 'Pallet stun');
     }
     // shove anyone standing in the footprint to their side
     for (const s of G.survivors) if (s !== by && s.alive && this.lateral(s.pos) < this.w / 2 && this.normalDist(s.pos) < 0.7) s.pos.addScaledVector(this.n, this.side(s.pos) * 0.8);
@@ -161,12 +166,15 @@ export class Gate {
     this.inward = V(0, 0, -spot.out);
     this.progress = 0; this.open = false; this.openers = new Set(); this.doorA = 0;
   }
-  update(dt) {
-    const G = this.G, ud = this.model.userData;
-    if (!this.open && G.gatesPowered && this.openers.size > 0) {
+  update(dt) { this.tick(dt); this.visual(dt); }
+  tick(dt) {
+    if (!this.open && this.G.gatesPowered && this.openers.size > 0) {
       this.progress += dt / 18;
       if (this.progress >= 1) this.doOpen();
     }
+  }
+  visual(dt) {
+    const G = this.G, ud = this.model.userData;
     const lit = this.open ? 3 : Math.floor(this.progress * 3.0001);
     ud.lamps.forEach((l, i) => { l.material = i < lit ? (this.open ? this.G.M.lanternLit : this.G.M.lanternRed) : this.G.M.lanternGlass; });
     ud.light.intensity = G.gatesPowered ? (this.open ? 4 : 1 + this.progress * 2) : 0;
@@ -209,6 +217,9 @@ export class Survivor {
   static STONE = new THREE.Color(0.42, 0.41, 0.385);
   constructor(G, def, isPlayer, perks = []) {
     this.G = G; this.def = def; this.isPlayer = isPlayer; this.id = SURV_ID++;
+    // isPlayer: this machine's own avatar. human: steered by a person (here or over the network).
+    // input: the controller that steers it on this machine (null = teammate AI). view: the cameras its gaze is tested with.
+    this.human = isPlayer; this.input = null; this.view = null; this.score = null; this.scoreLog = null; this.net = null;
     this.name = def.name; this.perks = new Set(perks);
     this.model = buildSurvivor(def, G.M);
     G.scene.add(this.model);
@@ -243,7 +254,7 @@ export class Survivor {
     if (a.type === 'heal' && a.target) a.target.healers.delete(this);
     if (a.type === 'selfheal') this.healers.delete(this);
     this.action = null;
-    if (this.isPlayer) this.G.ui.skill.cancel();
+    this.input?.skill?.cancel();
   }
 
   startAction(type, o = {}) {
@@ -282,8 +293,7 @@ export class Survivor {
   // ---------------------------------------------------------------- update
   update(dt) {
     const G = this.G;
-    this.animT += dt;
-    if (!this.alive) return;
+    if (!this.alive) { this.animT += dt; return; }
     if (this.blinkT > 0) this.blinkT -= dt;
     this.boost = Math.max(0, this.boost - dt); this.immune = Math.max(0, this.immune - dt);
     this.exhausted = Math.max(0, this.exhausted - dt); this.noBlink = Math.max(0, this.noBlink - dt);
@@ -323,14 +333,14 @@ export class Survivor {
         const was = this.health;
         this.health = was === 'downed' ? 'injured' : 'healthy';
         if (this.canonizing) this.endCanonize(false);
-        for (const h of [...this.healers]) { if (h.isPlayer && h !== this) G.addScore('altruism', 800, was === 'downed' ? 'Revived' : 'Healed'); h.cancelAction(); }
+        for (const h of [...this.healers]) { if (h !== this) G.addScore(h, 'altruism', 800, was === 'downed' ? 'Revived' : 'Healed'); h.cancelAction(); }
         this.healers.clear(); this.healClaim = null;
       }
     }
 
     if (this.vault) this.updateVault(dt);
     else if (this.health === 'carried') this.updateCarried(dt);
-    else if (this.isPlayer) G.playerControl(this, dt);
+    else if (this.input) G.control(this, dt, this.input);
     else this.updateAI(dt);
 
     // action progress (shared by player + AI)
@@ -338,10 +348,15 @@ export class Survivor {
 
     // scratch marks while sprinting
     if (this.speed > 3.2) { this.scratchT -= dt; if (this.scratchT < 0) { this.scratchT = 0.35; G.scratches.push({ x: this.pos.x, z: this.pos.z, t: G.time, s: this }); } }
-    // footsteps
+    this.visual(dt);
+  }
+
+  // Animation and footsteps: runs on every machine from the (replicated) state.
+  visual(dt) {
+    this.animT += dt;
     if (this.speed > 0.5 && (this.standing || this.health === 'downed')) {
       this.stepT -= dt * this.speed;
-      if (this.stepT < 0) { this.stepT = 1.25; G.audio.footstep(this.pos.clone().setY(0.1), this.speed > 3 ? 0.2 : 0.1, this.crouch); }
+      if (this.stepT < 0) { this.stepT = 1.25; this.G.audioLocal.footstep(this.pos.clone().setY(0.1), this.speed > 3 ? 0.2 : 0.1, this.crouch); }
     }
     this.syncModel(dt);
   }
@@ -362,12 +377,12 @@ export class Survivor {
     else if (a.type === 'shroud') {
       if (a.t >= 2.2) {
         const tg = a.target; this.cancelAction();
-        if (tg === G.killer) { G.killer.veil(); if (this.isPlayer) G.addScore('boldness', 2000, 'Veiled the Reliquary'); }
-        else { tg.setShroud(45); if (this.isPlayer) G.addScore('boldness', 400, 'Shrouded a Sentinel'); }
+        if (tg === G.killer) { G.killer.veil(this); G.addScore(this, 'boldness', 2000, 'Veiled the Reliquary'); }
+        else { tg.setShroud(45); G.addScore(this, 'boldness', 400, 'Shrouded a Sentinel'); }
       }
     } else if (a.type === 'bandage') {
       if (this.health !== 'injured') { this.cancelAction(); return; }
-      if (a.t >= 6) { this.cancelAction(); this.healProg = 0; this.health = 'healthy'; G.consumeItem(this); G.toast('Your wounds are bound', 'good'); }
+      if (a.t >= 6) { this.cancelAction(); this.healProg = 0; this.health = 'healthy'; G.consumeItem(this); G.toastTo(this, 'Your wounds are bound', 'good'); }
     } else if (a.type === 'search') {
       const c = a.chest;
       if (c.opened) { this.cancelAction(); return; }
@@ -402,7 +417,8 @@ export class Survivor {
     this.pos.copy(k.pos).addScaledVector(right, -0.32).add(V(0, 1.85, 0)).addScaledVector(k.forward(), 0.05);
     this.yaw = k.yaw + Math.PI / 2;
     this.speed = 0;
-    if (!this.isPlayer) this.wiggle += dt * 0.055;
+    if (!this.human) this.wiggle += dt * 0.055;
+    else if (this.input) this.G.wiggleInput(this, this.input);
     if (this.wiggle >= 1) k.dropCarried(true);
   }
 
@@ -432,7 +448,7 @@ export class Survivor {
     this.vault = { kind, from: this.pos.clone().lerp(from, 0.5), to, t: 0, dur: fast ? 0.5 : (kind === 'window' ? 0.95 : 0.85), yaw: Math.atan2(-side * n.x, -side * n.z) };
     this.G.audio.vault(c.clone().setY(0.8), fast);
     if (fast) this.G.noise(c, 26, 'vault');
-    if (this.isPlayer && this.G.killer && this.G.killer.target === this && flatDist(this.G.killer.pos, this.pos) < 14) this.G.addScore('boldness', 250, 'Chase vault');
+    if (this.G.killer && this.G.killer.target === this && flatDist(this.G.killer.pos, this.pos) < 14) this.G.addScore(this, 'boldness', 250, 'Chase vault');
   }
 
   hook(post) {
@@ -455,7 +471,7 @@ export class Survivor {
     this.immune = 10; this.boost = 1.5;
     if (this.hasPerk('secondwake') && !this.secondWakeUsed) { this.secondWakeUsed = true; this.noBlink = 15; this.immune = 15; }
     G.audio.chains(post.hang, 5);
-    if (by && by !== this) { G.toast(`${by.name} freed ${this.name}`, 'good'); if (by.isPlayer) G.addScore('altruism', 1500, 'Unbound a survivor'); }
+    if (by && by !== this) { G.toast(`${by.name} freed ${this.name}`, 'good'); G.addScore(by, 'altruism', 1500, 'Unbound a survivor'); }
     else { G.toast(`${this.name} tore free of the post`, 'good'); }
   }
 
@@ -565,7 +581,7 @@ export class Survivor {
     else if (this.speed > 0.3) anim = this.crouch ? 'crouch' : this.backpedal ? 'back' : 'walk';
     else if (this.crouch) { anim = 'crouch'; o.speed = 0; }
     if (anim === 'crouch' && this.speed < 0.3) { this.animT -= dt; }
-    if (this.isPlayer && this.lookPitch !== undefined) { o.lookPitch = this.lookPitch; o.lookYaw = this.lookYaw; }
+    if (this.human && this.lookPitch !== undefined) { o.lookPitch = this.lookPitch; o.lookYaw = this.lookYaw; }
     animateSurvivor(m, anim, this.animT, dt, o);
     if (this.health === 'carried') m.rotation.z = 0;
     if (this.aura.visible) { this.aura.position.copy(m.position); this.aura.rotation.copy(m.rotation); copyPose(m, this.aura); }
@@ -724,10 +740,11 @@ export class Survivor {
 
     // revive / heal teammates
     if (dK > 18) {
-      const hurt = G.survivors.filter((s) => s !== this && (s.health === 'downed' || (s.health === 'injured' && !s.isPlayer && this.health === 'healthy')) && flatDist(s.pos, this.pos) < 25)
+      const hurt = G.survivors.filter((s) => s !== this && (s.health === 'downed' || (s.health === 'injured' && !s.human && this.health === 'healthy')) && flatDist(s.pos, this.pos) < 25)
         .sort((a, b) => (a.health === 'downed' ? -10 : 0) + flatDist(a.pos, this.pos) - ((b.health === 'downed' ? -10 : 0) + flatDist(b.pos, this.pos)))[0];
-      const playerHurt = G.player.health === 'injured' && G.player.speed < 0.2 && !G.player.action && flatDist(G.player.pos, this.pos) < 6 && this.health === 'healthy';
-      const tgt = playerHurt ? G.player : hurt;
+      // a wounded person who stands still nearby is asking to be healed
+      const asking = this.health === 'healthy' && G.survivors.find((s) => s.human && s !== this && s.health === 'injured' && s.speed < 0.2 && !s.action && flatDist(s.pos, this.pos) < 6);
+      const tgt = asking || hurt;
       if (tgt && (!tgt.healers.size || tgt.healers.has(this)) && (!tgt.healClaim || tgt.healClaim === this)) {
         this.setAI('heal');
         tgt.healClaim = this;

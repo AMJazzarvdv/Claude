@@ -58,11 +58,11 @@ export class Chest {
     const G = this.G;
     this.opened = true;
     G.audio.chestOpen(this.pos.clone().setY(0.5));
-    if (!by.isPlayer) return;
-    if (by.item) { G.toast('Your hands are already full', 'warn'); return; }
+    if (!by.human) return;
+    if (by.item) { G.toastTo(by, 'Your hands are already full', 'warn'); return; }
     const id = POOL[Math.floor(Math.random() * POOL.length)];
     G.giveItem(by, id);
-    G.projectiles.push(new ItemReveal(G, this, by, id));
+    G.revealItem(this, by, id);
   }
   update(dt) {
     const ud = this.model.userData;
@@ -117,9 +117,10 @@ export class ItemReveal {
 }
 
 // A thrown flask of holy water.
+let FLASK_ID = 0;
 export class HolyFlask {
-  constructor(G, from, vel) {
-    this.G = G; this.pos = from.clone(); this.vel = vel.clone(); this.t = 0; this.done = false;
+  constructor(G, from, vel, owner = null) {
+    this.G = G; this.pos = from.clone(); this.vel = vel.clone(); this.t = 0; this.done = false; this.owner = owner; this.id = ++FLASK_ID;
     this.model = buildItemModel('holy', G.M); this.model.position.copy(this.pos);
     G.scene.add(this.model);
   }
@@ -160,7 +161,7 @@ export class HolyFlask {
       if (G.killer && near(G.killer.pos, 1.6)) target = G.killer;
       else target = G.sentinels.find((st) => near(st.pos, 1.5)) || G.memorials.find((m) => near(m.pos, 1.3)) || null;
     }
-    if (target) G.holyHit(target);
+    if (target) G.holyHit(target, this.owner);
   }
 }
 

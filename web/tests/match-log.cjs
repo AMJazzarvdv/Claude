@@ -1,6 +1,6 @@
 const { chromium } = require('playwright');
 (async () => {
-  const browser = await chromium.launch({ executablePath: process.env.CHROME || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+  const browser = await chromium.launch({ executablePath: process.env.CHROME || undefined, args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
   const page = await browser.newPage({ viewport: { width: 640, height: 360 } });
   page.on('pageerror', (e) => console.log('pageerror: ' + e.message + '\n' + e.stack));
   page.on('console', (m) => { if (m.type() === 'error') console.log('console: ' + m.text()); });

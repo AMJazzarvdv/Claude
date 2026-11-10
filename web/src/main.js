@@ -13,7 +13,8 @@ import { World, HALF } from './world.js';
 import { AudioEngine } from './audio.js';
 import { Bell, Pallet, Post, Gate, Hatch, Survivor, V, angDiff, yawTo, flatDist } from './entities.js';
 import { Killer, Sentinel, Memorial, TIER_NAMES } from './killer.js';
-import { Chest, HolyFlask, Votive, ITEMS, ITEM_ICONS, HOLD, buildItemModel } from './items.js';
+import { Chest, ItemReveal, ITEMS, ITEM_ICONS, HOLD, buildItemModel } from './items.js';
+import { Input, SurvivorControl, makeView } from './control.js';
 import { Crows } from './crows.js';
 import { Weather } from './weather.js';
 import { Ambient } from './ambient.js';
@@ -144,8 +145,9 @@ addEventListener('resize', () => {
 });
 
 // ------------------------------------------------------------------ input
-const keys = new Set(), pressed = new Set();
-let mouseDX = 0, mouseDY = 0, mouseDown = false, noLock = false;
+const localInput = new Input(true);
+const keys = localInput.keys, pressed = localInput.pressed;
+let mouseDX = 0, mouseDY = 0, noLock = false;
 addEventListener('keydown', (e) => {
   if (game?.state === 'playing' && ['Space', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ControlLeft', 'KeyS', 'KeyW', 'KeyF'].includes(e.code)) e.preventDefault();
   if (!keys.has(e.code)) pressed.add(e.code);
@@ -157,19 +159,18 @@ addEventListener('keydown', (e) => {
   }
 });
 addEventListener('keyup', (e) => keys.delete(e.code));
-addEventListener('blur', () => { keys.clear(); mouseDown = false; rightDown = false; });
+addEventListener('blur', () => { keys.clear(); localInput.mouseDown = false; localInput.rightDown = false; });
 addEventListener('mousemove', (e) => {
   if (!game || game.state !== 'playing') return;
   if (document.pointerLockElement === canvas || noLock) { mouseDX += e.movementX || 0; mouseDY += e.movementY || 0; }
 });
-let rightDown = false;
 canvas.addEventListener('mousedown', (e) => {
-  if (e.button === 0) mouseDown = true;
-  if (e.button === 2) { rightDown = true; pressed.add('Mouse2'); }
+  if (e.button === 0) { localInput.mouseDown = true; pressed.add('Mouse0'); }
+  if (e.button === 2) { localInput.rightDown = true; pressed.add('Mouse2'); }
   if (game?.state === 'intro') game.endIntro();
   if (game?.state === 'playing' && !document.pointerLockElement && !noLock) lock();
 });
-addEventListener('mouseup', (e) => { if (e.button === 0) mouseDown = false; if (e.button === 2) rightDown = false; });
+addEventListener('mouseup', (e) => { if (e.button === 0) localInput.mouseDown = false; if (e.button === 2) localInput.rightDown = false; });
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
 function lock() {
@@ -196,7 +197,10 @@ const tmpV = new THREE.Vector3();
 class Game {
   constructor(T, M) {
     this.T = T; this.M = M; this.audio = audio; this.ui = ui; this.scene = scene; this.camera = camera;
-    this.fx = new FX(scene, T);
+    // audioLocal / fxLocal always act on this machine; audio / fx are what the simulation calls (the host mirrors those to every player)
+    this.audioLocal = audio; this.fxLocal = this.fx = new FX(scene, T);
+    this.mode = 'solo'; this.role = 'survivor'; this.inp = localInput; this.net = null; this.effects = [];
+    localInput.skill = ui.skill;
     this.state = 'title';
     this.time = 0;
     this.camYaw = 0; this.camPitch = -0.15; this.camPos = V();
@@ -302,7 +306,9 @@ class Game {
   }
 
   // ---------------------------------------------------------------- match
-  async startMatch(defIndex, perks) {
+  // cfg: { mode: 'solo'|'host'|'client', seed, rain, realm, diff,
+  //        survivors: [{ def, perks, me, peer, name }], killer: { me, peer, name } }
+  async startMatch(cfg) {
     this.matchId = (this.matchId || 0) + 1;
     ui.only();
     grade.uniforms.uFade.value = 1;
@@ -310,43 +316,66 @@ class Game {
     ui.show('loading'); $('loadBar').style.width = '100%';
     await new Promise((r) => setTimeout(r, 30));
     if (this.titleStatue) this.titleStatue.parent?.remove(this.titleStatue);
-    const realm = REALMS[Math.floor(Math.random() * REALMS.length)];
+    this.cfg = cfg; this.mode = cfg.mode || 'solo';
+    const sim = this.mode !== 'client', net = this.net;
+    const realm = REALMS[cfg.realm] || REALMS[0];
     this.realm = realm;
-    this.diff = DIFFS[settings.difficulty] || DIFFS.vigil;
-    this.buildWorld(Math.floor(Math.random() * 1e9), { rain: realm.rain ?? Math.random() < 0.5 });
+    this.diff = DIFFS[cfg.diff] || DIFFS.vigil;
+    this.buildWorld(cfg.seed, { rain: !!cfg.rain });
     const W = this.world;
-    // survivors: player first
-    const order = [defIndex, ...SURVIVORS.map((_, i) => i).filter((i) => i !== defIndex)];
-    this.survivors = order.map((i, k) => new Survivor(this, SURVIVORS[i], k === 0, k === 0 ? perks : []));
-    this.player = this.survivors[0];
-    this.survivors.forEach((s, k) => {
-      const a = (k / 4) * Math.PI * 2;
-      const p = W.randomFreePoint(Math.random, 0, 2.5, W.survivorSpawn.x + Math.cos(a) * 2, W.survivorSpawn.z + Math.sin(a) * 2);
-      s.place(p); s.yaw = yawTo(s.pos, V(0, 0, 0));
+    this.survivors = cfg.survivors.map((c) => {
+      const s = new Survivor(this, SURVIVORS[c.def], !!c.me, c.perks || []);
+      s.human = !!(c.me || c.peer); s.peer = c.peer || null; s.playerName = c.name || '';
+      if (s.human) { s.score = { objectives: 0, survival: 0, altruism: 0, boldness: 0 }; s.scoreLog = []; }
+      if (c.me) { s.input = localInput; s.view = { cam: camera, mirror: mirrorCam, ready: true }; }
+      else if (c.peer) { s.view = makeView(); if (sim) { s.input = net.remoteInput(c.peer); s.net = { epoch: 1, free: false, pos: V(), t: 0 }; } }
+      return s;
     });
+    this.player = this.survivors.find((s) => s.isPlayer) || null;
     this.killer = new Killer(this);
-    this.killer.place(W.killerSpawn); this.killer.yaw = yawTo(this.killer.pos, V(0, 0, 0));
-    // two Sentinels already wait near bells
-    const bs = this.bells.slice().sort(() => Math.random() - 0.5).slice(0, 2);
-    for (const b of bs) {
-      const p = W.randomFreePoint(Math.random, 3, 6, b.pos.x, b.pos.z);
-      this.sentinels.push(new Sentinel(this, V(p.x, 0, p.z), Math.random() * 6.28, ['pray', 'tilt', 'beckon'][Math.floor(Math.random() * 3)]));
+    const kc = cfg.killer || {};
+    this.killer.human = !!(kc.me || kc.peer); this.killer.peer = kc.peer || null; this.killer.playerName = kc.name || '';
+    if (kc.me) this.killer.input = localInput;
+    else if (kc.peer && sim) { this.killer.input = net.remoteInput(kc.peer); this.killer.net = { epoch: 1, free: false, pos: V(), t: 0 }; }
+    this.role = kc.me ? 'killer' : 'survivor';
+    this.me = kc.me ? this.killer : this.player;
+    if (sim) {
+      this.survivors.forEach((s, k) => {
+        const a = (k / 4) * Math.PI * 2;
+        const p = W.randomFreePoint(Math.random, 0, 2.5, W.survivorSpawn.x + Math.cos(a) * 2, W.survivorSpawn.z + Math.sin(a) * 2);
+        s.place(p); s.yaw = yawTo(s.pos, V(0, 0, 0));
+      });
+      this.killer.place(W.killerSpawn); this.killer.yaw = yawTo(this.killer.pos, V(0, 0, 0));
+      // two Sentinels already wait near bells
+      const bs = this.bells.slice().sort(() => Math.random() - 0.5).slice(0, 2);
+      for (const b of bs) {
+        const p = W.randomFreePoint(Math.random, 3, 6, b.pos.x, b.pos.z);
+        this.sentinels.push(new Sentinel(this, V(p.x, 0, p.z), Math.random() * 6.28, ['pray', 'tilt', 'beckon'][Math.floor(Math.random() * 3)]));
+      }
+    } else {
+      // a guest: everything is placed by the host's first snapshot
+      this.survivors.forEach((s, k) => s.place({ x: W.survivorSpawn.x + k * 0.8, z: W.survivorSpawn.z }));
+      this.killer.place(W.killerSpawn);
+      this.weather.auto = false; this.crows.auto = false;
     }
     this.bellsRung = 0; this.bellsRequired = 5; this.gatesPowered = false; this.collapseT = null; this.hookEvents = 0;
     this.noises = []; this.scratches = []; this.time = 0; this.endT = null; this.auraT = 0; this.afterCD = 0; this.auraSrc = '';
-    this.score = { objectives: 0, survival: 0, altruism: 0, boldness: 0 }; this.scoreLog = []; this.stareScore = 0;
+    this.stareScore = 0; this.over = false; this.spectate = null; this.fate = null;
     this.fovKick = 0; camera.fov = 64; camera.updateProjectionMatrix();
-    this.memorials = []; this.projectiles = []; this.candle = null; this.deaths = 0; this.tollWarnT = -99; this.lookWarn = 0; this.canonYaw = 0;
-    this.player.item = null; this.player.itemCharges = 0;
-    this.skillT = 3; this.hitShake = 0; this.lastWiggleKey = null; this.escapeCD = 0; this.chase = 0;
-    this.camYaw = this.player.yaw; this.camPitch = -0.12;
-    this.camPos.copy(this.player.pos).add(V(0, 2, 0));
+    this.memorials = []; this.projectiles = []; this.effects = []; this.candle = null; this.deaths = 0; this.tollWarnT = -99; this.lookWarn = 0; this.canonYaw = 0;
+    for (const s of this.survivors) { s.item = null; s.itemCharges = 0; }
+    localInput.skillT = 3; localInput.holdLatch = false; localInput.lastWiggleKey = null; localInput.escapeCD = 0;
+    this.hitShake = 0; this.chase = 0;
+    this.camYaw = this.me.yaw; this.camPitch = -0.12;
+    this.camPos.copy(this.me.pos).add(V(0, 2, 0));
     ui.buildStatus(this.survivors);
-    ui.buildPerkHud(perks);
+    ui.buildPerkHud(this.player ? [...this.player.perks] : []);
     ui.clearToasts();
     $('fps').style.display = settings.showFps ? 'block' : 'none';
+    document.body.classList.toggle('as-killer', this.role === 'killer');
     ui.show('loading', false);
     this.updateItemHud(); this.updateTierHud();
+    net?.onMatchBuilt();
     this.startIntro(realm);
   }
 
@@ -443,15 +472,16 @@ class Game {
     this.state = 'playing';
     ui.only('hud');
     this.fadeIn = 0; this.matchStart = performance.now() - 900;
-    this.camYaw = this.player.yaw; this.camPitch = -0.12;
-    this.camPos.copy(this.player.pos).add(V(0, 2, 0));
+    this.camYaw = this.me.yaw; this.camPitch = -0.12;
+    this.camPos.copy(this.me.pos).add(V(0, 2, 0));
     keys.clear(); pressed.clear();
-    const m = this.matchId;
-    setTimeout(() => { if (this.matchId === m && this.state !== 'title') this.toast('Ring five of the seven Mourning Bells', 'big'); }, 600);
-    setTimeout(() => { if (this.matchId === m && this.state !== 'title') this.toast('It cannot move while you watch it', 'warn'); }, 3800);
+    const m = this.matchId, hint = (text, kind, ms) => setTimeout(() => { if (this.matchId === m && this.state !== 'title') ui.toast(text, kind); }, ms);
+    if (this.role === 'killer') { hint('Bind them all before five bells ring', 'big', 600); hint('You are stone while any of them can see you', 'warn', 3800); }
+    else { hint('Ring five of the seven Mourning Bells', 'big', 600); hint('It cannot move while you watch it', 'warn', 3800); }
+    this.net?.onIntroEnd();
   }
 
-  pause() { if (this.state !== 'playing') return; this.state = 'paused'; ui.only('hud', 'pause'); keys.clear(); mouseDown = false; audio.silenceGrind('killer'); }
+  pause() { if (this.state !== 'playing') return; this.state = 'paused'; ui.only('hud', 'pause'); keys.clear(); localInput.mouseDown = false; audio.silenceGrind('killer'); }
   resume(fromLock = false) {
     if (this.state !== 'paused') return;
     this.state = 'playing'; ui.only('hud');
@@ -472,14 +502,19 @@ class Game {
   giveItem(s, id) {
     s.item = id; s.itemCharges = ITEMS[id].charges;
     this.attachHeld(s);
-    audio.itemUse();
-    this.toast(`You found ${ITEMS[id].name}`, 'good');
-    this.updateItemHud();
+    this.sfxTo(s, 'itemUse');
+    this.toastTo(s, `You found ${ITEMS[id].name}`, 'good');
+    if (s.isPlayer) this.updateItemHud();
   }
   consumeItem(s) {
     s.item = null; s.itemCharges = 0; s.mirrorUp = false;
     this.attachHeld(s);
-    this.updateItemHud();
+    if (s.isPlayer) this.updateItemHud();
+  }
+  // what a chest gave rises out of it and flies to the finder's hand (shown on every machine)
+  revealItem(chest, s, id) {
+    this.effects.push(new ItemReveal(this, chest, s, id));
+    this.net?.event('reveal', chest.id, this.survivors.indexOf(s), id);
   }
   attachHeld(s) {
     if (s.heldModel) { s.heldModel.parent?.remove(s.heldModel); s.heldModel = null; }
@@ -492,27 +527,30 @@ class Game {
     hand.add(m); s.heldModel = m;
   }
 
-  holyHit(target) {
-    if (target === this.killer) { target.scald(); this.addScore('boldness', 1500, 'Scalded the Reliquary'); return; }
-    if (target.isMemorial) { target.shatter(); this.toast('The statue crumbles. Their vigil is over.', 'good'); this.addScore('altruism', 300, 'Laid a statue to rest'); return; }
+  holyHit(target, by = null) {
+    if (target === this.killer) { target.scald(); this.addScore(by, 'boldness', 1500, 'Scalded the Reliquary'); return; }
+    if (target.isMemorial) { target.shatter(); this.toast('The statue crumbles. Their vigil is over.', 'good'); this.addScore(by, 'altruism', 300, 'Laid a statue to rest'); return; }
     const i = this.sentinels.indexOf(target);
     if (i < 0) return;
     this.sentinels.splice(i, 1);
     this.world.root.remove(target.model); this.world.root.remove(target.cloth);
     this.fx.debris(target.pos); audio.shatter(target.pos.clone().setY(1.2));
-    this.toast('A Sentinel shatters', 'good'); this.addScore('boldness', 600, 'Shattered a Sentinel');
+    this.toast('A Sentinel shatters', 'good'); this.addScore(by, 'boldness', 600, 'Shattered a Sentinel');
   }
 
   onAscend(k, tier) {
-    const near = flatDist(k.pos, this.player.pos) < 35;
-    if (near) { this.hitShake = Math.max(this.hitShake, 0.5); this.fovKick = 9; }
+    const m = this.matchId;
     this.toast(`The Reliquary ascends: ${TIER_NAMES[tier]}`, 'big');
-    setTimeout(() => this.toast(tier === 2 ? 'Its halo burns. Hold its gaze too long and it tolls.' : 'It has wings now. It moves faster and Laments sooner.', 'warn'), 2200);
+    setTimeout(() => { if (this.matchId === m) this.toast(tier === 2 ? 'Its halo burns. Hold its gaze too long and it tolls.' : 'It has wings now. It moves faster and Laments sooner.', 'warn'); }, 2200);
+    this.ascendFelt(k, tier);
+  }
+  // what this machine's player feels when it ascends (guests run this when they see the tier change)
+  ascendFelt(k, tier) {
+    if (flatDist(k.pos, this.viewPos()) < 35) { this.hitShake = Math.max(this.hitShake, 0.5); this.fovKick = 9; }
     this.updateTierHud();
   }
   onTollCharge(k) {
-    if (this.player.watching) this.lookWarn = 2.2;
-    if (this.time - this.tollWarnT > 20) { this.tollWarnT = this.time; this.toast('Its halo is burning. Look away!', 'warn'); }
+    if (this.time - this.tollWarnT > 20) { this.tollWarnT = this.time; this.toast('Its halo is burning. Look away!', 'warn', 'survivor'); }
   }
   tollOfStone(k) {
     const head = k.headPos();
@@ -521,7 +559,7 @@ class Game {
       if (flatDist(s.pos, k.pos) > 24 || !this.world.lineOfSight(head, s.eye())) continue;
       if (s.noBlink <= 0) s.forceBlink(0.9);
       s.resolve = Math.max(0, s.resolve - 25);
-      if (s.isPlayer) { this.hitShake = Math.max(this.hitShake, 0.8); this.flash = Math.max(this.flash || 0, 0.7); this.fovKick = -7; }
+      this.feel(s, 'toll');
     }
     this.fx.shockwave(k.pos, 24);
     audio.tollRelease(head);
@@ -529,18 +567,38 @@ class Game {
     this.toast('The Toll of Stone', 'bad');
   }
   onCanonizeStart(t) {
-    this.toast(`It is turning ${t.name} to stone. Look at it to stop it!`, 'bad');
+    this.toast(`It is turning ${t.name} to stone. Look at it to stop it!`, 'bad', 'survivor');
     audio.choir(t.chest(), 3.2, 0.4, 0.04, 92.5);
   }
   onLightning() {
+    this.net?.event('lightning', this.weather.flashes);
+    this.lightningSeen();
+  }
+  lightningSeen() {
     if (this.state !== 'playing' || !this.player?.alive || !this.killer) return;
     if (flatDist(this.killer.pos, this.player.pos) < 55) { this.auraT = Math.max(this.auraT, 0.7); if (this.auraSrc !== 'afterimage') this.auraSrc = 'lightning'; }
   }
 
   // ---------------------------------------------------------------- hooks for entities
-  toast(t, k) { ui.toast(t, k); }
-  noise(pos, r, type) { this.noises.push({ pos: pos.clone(), r, type, t: this.time }); if (this.noises.length > 40) this.noises.shift(); }
-  addScore(cat, amt, label) { if (!this.score) return; this.score[cat] += amt; if (label) this.scoreLog.push(`${label} +${amt}`); }
+  // A line for everyone (aud: only 'survivor's or only the 'killer' player, when given).
+  toast(t, k, aud = null) { if (!aud || aud === this.role) ui.toast(t, k); this.net?.event('toast', t, k || '', aud); }
+  // A line for one person: shown here if it is this machine's player, sent to them otherwise.
+  toastTo(s, t, k) { if (!s) return; if (s === this.me) ui.toast(t, k); else if (s.peer) this.net?.eventTo(s.peer, 'toast', t, k || ''); }
+  sfxTo(s, name) { if (!s) return; if (s === this.me) audio[name](); else if (s.peer) this.net?.eventTo(s.peer, 'sfx', name); }
+  // A jolt for one person's camera: 'hit' or 'toll'.
+  feel(s, kind) {
+    if (s !== this.me) { if (s.peer) this.net?.eventTo(s.peer, 'feel', kind); return; }
+    if (kind === 'hit') { this.hitShake = 1; this.fovKick = 7; }
+    else if (kind === 'toll') { this.hitShake = Math.max(this.hitShake, 0.8); this.flash = Math.max(this.flash || 0, 0.7); this.fovKick = -7; }
+  }
+  noise(pos, r, type) {
+    this.noises.push({ pos: pos.clone(), r, type, t: this.time }); if (this.noises.length > 40) this.noises.shift();
+    this.killerHeard?.(pos, r, type);
+  }
+  addScore(s, cat, amt, label) { if (!s || !s.score) return; s.score[cat] = (s.score[cat] || 0) + amt; if (label) s.scoreLog.push(`${label} +${amt}`); }
+  get promptText() { return localInput.promptText; }
+  // where this machine's player stands (or their camera, once they are gone)
+  viewPos() { const m = this.me; return m && (m === this.killer || m.alive) ? m.pos : camera.position; }
   bellRateMult() { return Math.max(0.7, 1 - 0.05 * this.hookEvents); }
   isWatched(pts) { return this.survivors.some((s) => this.canSee(s, pts)); }
   agentCircles(self) {
@@ -574,47 +632,72 @@ class Game {
   }
   onSurvivorHooked(s) { this.hookEvents++; this.toast(`${s.name} is bound to a Weeping Post`, 'bad'); }
   onSurvivorDied(s, how) {
-    this.deaths = (this.deaths || 0) + 1;
+    this.deaths = (this.deaths || 0) + 1; s.fate = how;
     this.toast(how === 'canonized' ? `${s.name} was canonized. Their statue joins the vigil.` : `${s.name} ${how === 'bled' ? 'bled out in the peat' : 'was taken by the moor'}`, 'bad');
-    if (s.isPlayer) { this.endT = 3; this.endReason = how; }
+    this.sealed(s, how);
     this.checkAllDone();
   }
   onEscape(s, how) {
+    s.fate = how;
     this.toast(`${s.name} escaped${how === 'hatch' ? ' through the Drowned Well' : ''}`, 'good');
-    if (s.isPlayer) { this.addScore('survival', how === 'hatch' ? 4000 : 5000, 'Escaped'); this.endT = 2.5; this.endReason = how; audio.escapeChord(); }
+    this.addScore(s, 'survival', how === 'hatch' ? 4000 : 5000, 'Escaped');
+    this.sfxTo(s, 'escapeChord');
+    this.sealed(s, how);
     this.checkAllDone();
   }
-  checkAllDone() { if (this.survivors.every((s) => !s.alive) && this.endT === null) this.endT = 2.5; }
-  onHit(s) { if (s.isPlayer) { this.hitShake = 1; this.fovKick = 7; } }
+  // A survivor's fate is sealed (dead or out). Alone, that ends the vigil; with others, you watch on.
+  sealed(s, how) {
+    if (s.isPlayer) this.sealedLocal(how);
+    else if (s.peer) this.net?.eventTo(s.peer, 'sealed', how);
+  }
+  sealedLocal(how) {
+    this.endReason = how;
+    if (this.mode === 'solo') this.endT = how === 'gate' || how === 'hatch' ? 2.5 : 3;
+    else this.beginSpectate();
+  }
+  // The vigil is over for everyone when no survivor is left on the moor; without a
+  // person playing the Reliquary it also ends once every person's fate is sealed.
+  checkAllDone() {
+    if (this.over || this.mode === 'client') return;
+    const none = this.survivors.every((s) => !s.alive);
+    const peopleDone = !this.killer.human && this.survivors.every((s) => !s.human || !s.alive);
+    if (this.mode === 'solo') { if (none && this.endT === null) this.endT = 2.5; return; }
+    if (none || peopleDone) { this.over = true; this.endT = 3; this.net?.matchOver(); }
+  }
+  onHit(s) { this.feel(s, 'hit'); }
   onGateOpened() {
     this.toast('A Lychgate swings open', 'good');
     if (this.collapseT === null) { this.collapseT = 120; setTimeout(() => this.toast('The moor is rising — two minutes', 'warn'), 1500); }
   }
   onPlayerBlink() {
-    if (this.player.hasPerk('afterimage') && this.afterCD <= 0) { this.auraT = 4; this.auraSrc = 'afterimage'; this.afterCD = 30; }
+    if (this.player?.hasPerk('afterimage') && this.afterCD <= 0) { this.auraT = 4; this.auraSrc = 'afterimage'; this.afterCD = 30; }
     this.killer?.snapGhost();
   }
 
   // ---------------------------------------------------------------- gaze
   canSee(s, pts) {
     if (!s.alive || s.blinking || s.health === 'hooked' || s.health === 'carried') return false;
-    if (s.isPlayer) {
-      // the orbit camera while you are turned to stone is not your gaze
+    const v = s.view;
+    if (v && v.ready) {
+      // a person: what is on their screen, with nothing in the way
+      // (the orbit camera while you are turned to stone is not your gaze)
       if (s.canonizing) return false;
       if (s.mirrorUp) {
         // the hand mirror shows what is behind you, and that gaze counts too
+        const mc = v.mirror;
         for (const p of pts) {
-          tmpV.copy(p).project(mirrorCam);
+          tmpV.copy(p).project(mc);
           if (tmpV.z > 1 || tmpV.z < -1 || Math.abs(tmpV.x) > 1 || Math.abs(tmpV.y) > 1) continue;
-          if (mirrorCam.position.distanceTo(p) > 40) continue;
-          if (this.world.raycast(mirrorCam.position, p) >= 0.995) return true;
+          if (mc.position.distanceTo(p) > 40) continue;
+          if (this.world.raycast(mc.position, p) >= 0.995) return true;
         }
       }
+      const cam = v.cam;
       for (const p of pts) {
-        tmpV.copy(p).project(camera);
+        tmpV.copy(p).project(cam);
         if (tmpV.z > 1 || tmpV.z < -1 || Math.abs(tmpV.x) > 1 || Math.abs(tmpV.y) > 1) continue;
-        if (camera.position.distanceTo(p) > 46) continue;
-        if (this.world.raycast(camera.position, p) >= 0.995) return true;
+        if (cam.position.distanceTo(p) > 46) continue;
+        if (this.world.raycast(cam.position, p) >= 0.995) return true;
       }
       return false;
     }
@@ -644,153 +727,12 @@ class Game {
         if (s.noBlink > 0) s.resolve = 0.01;
         else { s.resolve = 28; s.forceBlink(0.45); }
       }
-      if (s.isPlayer) this.addScore('boldness', 20 * dt);
+      this.addScore(s, 'boldness', 20 * dt);
     }
     k.watchers = w;
   }
 
-  // ---------------------------------------------------------------- player
-  interactions(s, fwd) {
-    const out = { space: null, hold: null };
-    const near = (p, r) => flatDist(p, s.pos) < r;
-    const facing = (p, min = 0.25) => { const d = V(p.x - s.pos.x, 0, p.z - s.pos.z); const l = d.length(); return l < 0.7 || d.divideScalar(l).dot(fwd) > min; };
-    const sprint = keys.has('ShiftLeft') || keys.has('ShiftRight');
-    let best = 1e9;
-    for (const w of this.world.windows) {
-      const sd = (s.pos.x - w.x) * w.nx + (s.pos.z - w.z) * w.nz, ld = Math.abs((s.pos.x - w.x) * w.ax + (s.pos.z - w.z) * w.az);
-      if (Math.abs(sd) < 1.2 && ld < w.halfW + 0.2 && facing(w, 0.2) && Math.abs(sd) < best) { best = Math.abs(sd); out.space = { text: 'Vault', fn: () => s.startVault('window', w, sprint && s.speed > 3) }; }
-    }
-    for (const p of this.pallets) {
-      if (p.state === 'broken') continue;
-      const nd = p.normalDist(s.pos), ld = p.lateral(s.pos);
-      if (p.state === 'up' && ld < p.w / 2 + 0.45 && nd < 1.15 && nd < best) { best = nd; out.space = { text: 'Drop pallet', fn: () => { s.startAction('drop'); p.drop(s); } }; }
-      if (p.state === 'down' && ld < p.w / 2 + 0.2 && nd < 1.35 && nd > 0.55 && facing(p.center, 0.3) && nd < best) { best = nd; out.space = { text: 'Vault pallet', fn: () => s.startVault('pallet', p, sprint && s.speed > 3) }; }
-    }
-    best = 1e9;
-    const consider = (d, text, fn) => { if (d < best) { best = d; out.hold = { text, fn }; } };
-    for (const b of this.bells) if (!b.done && !b.locked && near(b.pos, 1.95) && facing(b.pos, 0)) consider(flatDist(b.pos, s.pos), 'Ring the bell', () => s.startAction('ring', { bell: b }));
-    for (const o of this.survivors) {
-      if (o === s) continue;
-      if (o.health === 'hooked' && near(o.post.hang, 1.7)) consider(0.1, `Unbind ${o.def.short}`, () => s.startAction('unhook', { target: o }));
-      if ((o.health === 'injured' || o.health === 'downed') && near(o.pos, 1.5)) consider(flatDist(o.pos, s.pos), `${o.health === 'downed' ? 'Revive' : 'Heal'} ${o.def.short}`, () => s.startAction('heal', { target: o }));
-    }
-    if (this.gatesPowered) for (const g of this.gates) if (!g.open && near(g.lever, 1.7)) consider(0.2, 'Open the Lychgate', () => s.startAction('gate', { gate: g }));
-    for (const st of this.sentinels) if (st.shroud <= 0 && near(st.pos, 1.75) && facing(st.pos, 0.3)) consider(flatDist(st.pos, s.pos), 'Shroud the statue', () => s.startAction('shroud', { target: st }));
-    const k = this.killer;
-    if (k.petrified && k.veilT <= 0 && k.stunT <= 0 && near(k.pos, 1.75) && facing(k.pos, 0.3)) consider(flatDist(k.pos, s.pos), 'Shroud the statue', () => s.startAction('shroud', { target: k }));
-    if (this.hatch && near(this.hatch.pos, 1.6)) consider(0, 'Descend into the Drowned Well', () => s.startAction('hatch'));
-    for (const c of this.chests) if (!c.opened && near(c.pos, 1.5) && facing(c.pos, 0.2)) {
-      if (s.item) { if (!out.hold) out.full = true; }
-      else consider(flatDist(c.pos, s.pos), 'Search the reliquary chest', () => s.startAction('search', { chest: c }));
-    }
-    return out;
-  }
-
-  playerControl(s, dt) {
-    const fwd = V(Math.sin(this.camYaw), 0, Math.cos(this.camYaw));
-    const right = V(-Math.cos(this.camYaw), 0, Math.sin(this.camYaw));
-    let mx = 0, mz = 0;
-    if (keys.has('KeyW') || keys.has('ArrowUp')) mz += 1;
-    if (keys.has('KeyS') || keys.has('ArrowDown')) mz -= 1;
-    if (keys.has('KeyD')) mx += 1;
-    if (keys.has('KeyA')) mx -= 1;
-    const dir = fwd.clone().multiplyScalar(mz).addScaledVector(right, mx);
-    const hold = keys.has('KeyE') || mouseDown;
-    s.lookPitch = clamp(-this.camPitch, -0.6, 0.6);
-    s.lookYaw = clamp(angDiff(s.yaw, this.camYaw), -1.1, 1.1);
-    s.backpedal = false; s.mirrorUp = false;
-    this.promptText = ''; this.promptProg = null; this.promptHeal = false;
-
-    if (s.health === 'hooked') return this.hookedControl(s, dt);
-    if (s.canonizing) { s.speed = 0; this.promptText = 'The stone is creeping up your body…'; this.promptProg = s.stone || 0; return; }
-    if (s.health === 'downed') {
-      s.crouch = false;
-      if (dir.lengthSq() > 0) s.moveTo(dir, 0.7, dt); else s.speed = 0;
-      this.promptText = s.healers.size ? 'Someone is helping you up…' : 'You are dying. Crawl to safety.';
-      this.promptProg = s.healers.size ? s.healProg : null; this.promptHeal = true;
-      return;
-    }
-    if (!s.standing) return;
-    s.crouch = keys.has('KeyC') || keys.has('ControlLeft') || keys.has('ControlRight');
-
-    if (s.action) {
-      const a = s.action;
-      const ok = { ring: hold, heal: hold, unhook: hold, gate: hold, shroud: hold, search: hold, hatch: true, bandage: true, selfheal: keys.has('KeyR'), drop: true }[a.type];
-      if (!ok || (dir.lengthSq() > 0 && a.type !== 'drop' && a.type !== 'hatch')) s.cancelAction();
-      else {
-        s.speed = 0;
-        if (a.type === 'ring') { s.yaw += angDiff(s.yaw, yawTo(s.pos, a.bell.pos)) * Math.min(1, dt * 8); this.addScore('objectives', 1000 / 80 * dt); }
-        if (a.type === 'heal' || a.type === 'unhook' || a.type === 'shroud' || a.type === 'gate') {
-          const tp = a.type === 'gate' ? a.gate.lever : a.target.pos;
-          s.yaw += angDiff(s.yaw, yawTo(s.pos, tp)) * Math.min(1, dt * 8);
-        }
-        this.actionPrompt(s, a);
-        this.maybeSkillCheck(s, a, dt);
-        return;
-      }
-    }
-    const cand = this.interactions(s, fwd);
-    if (pressed.has('Space') && cand.space) { cand.space.fn(); return; }
-    if (hold && cand.hold && !this.holdLatch) { cand.hold.fn(); return; }
-    if (!hold) this.holdLatch = false;
-    if (keys.has('KeyR') && s.health === 'injured') { s.startAction('selfheal'); return; }
-    if (pressed.has('KeyB') && !s.blinking) { s.forceBlink(0.3); s.resolve = Math.min(s.maxResolve, s.resolve + 30); }
-    if (this.useItem(s, dt)) return;
-    const parts = [];
-    if (cand.space) parts.push(`<kbd>Space</kbd> ${cand.space.text}`);
-    if (cand.hold) parts.push(`<kbd>E</kbd> ${cand.hold.text}`);
-    else if (cand.full) parts.push('Your hands are full');
-    if (s.health === 'injured' && !cand.hold) parts.push('<kbd>R</kbd> Mend wounds');
-    this.promptText = parts.join('&nbsp;&nbsp;&nbsp;');
-
-    if (dir.lengthSq() > 0) {
-      dir.normalize();
-      const back = dir.dot(fwd) < -0.35;
-      const sprint = keys.has('ShiftLeft') || keys.has('ShiftRight');
-      let sp;
-      if (s.crouch) sp = 1.13;
-      else if (back) { sp = 1.6; s.backpedal = true; }
-      else if ((sprint || s.boost > 0) && !s.mirrorUp) sp = s.runSpeed();
-      else sp = 2.26;
-      s.moveTo(dir, sp, dt, true, back ? this.camYaw : null);
-    } else s.speed = 0;
-  }
-
-  // F or right mouse: use whatever you carry. Returns true when it consumed the frame.
-  useItem(s, dt) {
-    const held = keys.has('KeyF') || rightDown, press = pressed.has('KeyF') || pressed.has('Mouse2');
-    if (!s.item) return false;
-    if (s.item === 'mirror') {
-      if (held && s.itemCharges > 0 && !s.vault) {
-        s.mirrorUp = true; s.itemCharges -= dt;
-        if (s.itemCharges <= 0) { this.consumeItem(s); this.toast('The mirror cracks', 'warn'); audio.shatter(s.chest()); }
-      }
-      return false;
-    }
-    if (!press) return false;
-    if (s.item === 'candle') {
-      if (this.candle) this.candle.dispose();
-      this.candle = new Votive(this, s.pos.clone().addScaledVector(s.forward(), 0.7));
-      this.consumeItem(s); audio.itemUse();
-      this.toast('The candle is lit. In its light the stone cannot Lament or toll.', 'good');
-      return true;
-    }
-    if (s.item === 'holy') {
-      const look = V(); camera.getWorldDirection(look);
-      const right = V(-Math.cos(this.camYaw), 0, Math.sin(this.camYaw));
-      const from = s.pos.clone().add(V(0, 1.55, 0)).addScaledVector(right, -0.15).addScaledVector(look, 0.4);
-      const vel = look.multiplyScalar(15).add(V(0, 3.2, 0));
-      this.projectiles.push(new HolyFlask(this, from, vel));
-      s.throwT = 0.5; this.consumeItem(s); audio.vault(from, false);
-      return true;
-    }
-    if (s.item === 'bandage') {
-      if (s.health === 'injured') { s.startAction('bandage'); return true; }
-      this.toast('You are not wounded', 'warn');
-    }
-    return false;
-  }
-
+  // ---------------------------------------------------------------- HUD bits
   updateItemHud() {
     const s = this.player, el = $('itemSlot');
     if (!s || !s.item) { el.hidden = true; return; }
@@ -808,72 +750,20 @@ class Game {
     document.querySelectorAll('#tierPips i').forEach((el, i) => el.classList.toggle('on', i < t));
   }
 
-  actionPrompt(s, a) {
-    const names = { ring: 'Ringing', heal: a.target?.health === 'downed' ? 'Reviving' : 'Healing', selfheal: 'Mending', bandage: 'Binding your wounds', search: 'Searching', unhook: 'Unbinding', gate: 'Opening', shroud: 'Shrouding', hatch: 'Descending', drop: '' };
-    let prog = null, heal = false;
-    if (a.type === 'ring') prog = a.bell.progress;
-    else if (a.type === 'heal') { prog = a.target.healProg; heal = true; }
-    else if (a.type === 'bandage') { prog = Math.max(s.healProg, a.t / 6); heal = true; }
-    else if (a.type === 'selfheal') { prog = s.healProg; heal = true; }
-    else if (a.type === 'search') prog = a.chest.progress;
-    else if (a.type === 'unhook') prog = a.t / 1.2;
-    else if (a.type === 'gate') prog = a.gate.progress;
-    else if (a.type === 'shroud') prog = a.t / 2.2;
-    this.promptText = names[a.type] || ''; this.promptProg = prog; this.promptHeal = heal;
-  }
-
-  maybeSkillCheck(s, a, dt) {
-    if (!['ring', 'heal', 'selfheal'].includes(a.type) || ui.skill.active) return;
-    this.skillT -= dt;
-    if (this.skillT > 0) return;
-    this.skillT = 2.5 + Math.random() * 4.5;
-    if (Math.random() > 0.6) return;
-    ui.skill.start((r) => {
-      const act = s.action;
-      if (r === 'great') { if (act?.type === 'ring') { act.bell.progress = Math.min(0.999, act.bell.progress + 0.012); } this.addScore('objectives', 150, 'Great toll check'); }
-      else if (r === 'good') this.addScore('objectives', 50);
-      else {
-        if (act?.type === 'ring') { act.bell.progress = Math.max(0, act.bell.progress - 0.1); audio.crack(act.bell.pos.clone().setY(2.5)); this.noise(act.bell.pos, 80, 'crack'); this.toast('The bell cracks — the Reliquary heard that', 'bad'); }
-        else if (act) { const tg = act.type === 'heal' ? act.target : s; tg.healProg = Math.max(0, tg.healProg - 0.1); audio.groan(s.chest(), s.def.voice, 0.3); this.noise(s.pos, 12, 'groan'); }
-        s.cancelAction(); this.holdLatch = true;
-      }
-    });
-  }
-
-  hookedControl(s, dt) {
-    s.speed = 0;
-    this.escapeCD -= dt;
-    if (s.hookPhase === 1) {
-      this.promptText = s.escapeAttempts > 0 ? `Bound. Wait for help, or <kbd>Space</kbd> try to tear free (${s.escapeAttempts} left)` : 'Bound. Wait for help.';
-      this.promptProg = s.hookTimer / 55;
-      if (pressed.has('Space') && s.escapeAttempts > 0 && this.escapeCD <= 0) {
-        s.escapeAttempts--; this.escapeCD = 1.2;
-        if (Math.random() < 0.06) { s.unhook(s); this.addScore('survival', 1500, 'Tore free'); }
-        else { s.hookTimer = Math.max(1, s.hookTimer - 8); audio.chains(s.post.hang, 4); this.toast('The chains hold', 'bad'); }
-      }
-    } else {
-      this.promptText = 'Struggle! Hit the toll checks or the moor takes you';
-      this.promptProg = s.hookTimer / 50;
-      if (!ui.skill.active) {
-        this.skillT -= dt;
-        if (this.skillT <= 0) {
-          this.skillT = 1.2 + Math.random() * 1.8;
-          ui.skill.start((r) => { if (r === 'miss') { s.hookTimer -= 10; audio.gurgle(s.post.hang, 6, 0.5); } }, { size: 40, great: 0, dur: 1.0 });
-        }
-      }
-    }
-  }
-
   // ---------------------------------------------------------------- camera
   updateCamera(dt) {
-    const s = this.player;
     const sens = 0.0022 * settings.sens;
     this.camYaw -= mouseDX * sens;
     this.camPitch -= mouseDY * sens * (settings.invert ? -1 : 1);
     if (keys.has('ArrowLeft')) this.camYaw += dt * 2.2;
     if (keys.has('ArrowRight')) this.camYaw -= dt * 2.2;
     mouseDX = mouseDY = 0;
-    this.camPitch = clamp(this.camPitch, -1.25, 0.95);
+    this.camPitch = clamp(this.camPitch, -1.25, this.role === 'killer' ? 1.2 : 0.95);
+    localInput.camYaw = this.camYaw; localInput.camPitch = this.camPitch;
+    if (this.role === 'killer') return this.killerCamera(dt, camera);
+    // once your own fate is sealed you watch over someone else's shoulder
+    if (this.spectate && !this.spectate.alive) this.nextSpectate();
+    const s = this.spectate || this.player;
     let pivot, dist = 3.4, side = 0.5;
     if (s.health === 'hooked' || s.health === 'carried') { pivot = V(s.pos.x, s.pos.y + (s.health === 'carried' ? 0 : 1.4), s.pos.z); dist = 4.2; side = 0; }
     else pivot = V(s.pos.x, s.pos.y + (s.health === 'downed' ? 0.55 : s.crouch ? 1.05 : 1.62), s.pos.z);
@@ -922,21 +812,25 @@ class Game {
     mirrorCam.updateMatrixWorld();
   }
 
+  beginSpectate() { this.spectate = null; this.nextSpectate(); if (this.spectate) ui.toast('Your vigil is over. You watch the others now.', 'warn'); }
+  nextSpectate() {
+    const alive = this.survivors.filter((s) => s.alive && !s.isPlayer);
+    if (!alive.length) { this.spectate = null; return; }
+    this.spectate = alive[(alive.indexOf(this.spectate) + 1) % alive.length];
+  }
+
   // ---------------------------------------------------------------- frame
+  // The simulation step: runs when playing alone and on the host of an online vigil.
   update(dt) {
     this.time += dt;
-    const p = this.player, k = this.killer;
-    if (pressed.has('Space')) ui.skill.press();
-    // carried: wiggle with alternating A / D
-    if (p.health === 'carried') {
-      const key = pressed.has('KeyA') ? 'A' : pressed.has('KeyD') ? 'D' : null;
-      if (key && key !== this.lastWiggleKey) { p.wiggle += 0.035; this.lastWiggleKey = key; }
-    }
+    const k = this.killer;
+    if (pressed.has('Space')) { if (!ui.skill.press() && this.spectate) this.nextSpectate(); }
+    this.net?.hostPre(dt);
     for (const s of this.survivors) s.update(dt);
     this.updateCamera(dt);
     this.computeWatch(dt);
     k.update(dt);
-    for (const b of this.bells) { b.update(dt); if (b.locked) { b.model.userData.light.intensity = 0.15; b.model.userData.halo.material.opacity = 0.03; } }
+    for (const b of this.bells) b.update(dt);
     for (const pl of this.pallets) pl.update(dt);
     for (const po of this.posts) po.update(dt);
     for (const g of this.gates) g.update(dt);
@@ -946,7 +840,6 @@ class Game {
     if (this.projectiles.some((pr) => pr.done)) this.projectiles = this.projectiles.filter((pr) => !pr.done);
     if (this.candle && !this.candle.update(dt)) { this.candle.dispose(); this.candle = null; this.toast('The candle gutters out', 'warn'); }
     this.crows?.update(dt);
-    ui.skill.update(dt);
     // ascension: the Reliquary grows stronger as the vigil goes on
     {
       const d = this.diff;
@@ -955,31 +848,43 @@ class Game {
       if (this.bellsRung >= d.tier3 || this.deaths >= 1 || this.hookEvents >= 5) want = 3;
       if (want > k.tier) k.ascend(want);
     }
-
     // escapes through open gates
     for (const s of this.survivors) if (s.standing && Math.abs(s.pos.z) > HALF + 2.4) s.escape('gate');
     // the drowned well appears for the last one standing
     const alive = this.survivors.filter((s) => s.alive);
     if (!this.hatch && alive.length === 1 && alive[0].standing && this.survivors.length > 1) {
       this.hatch = new Hatch(this, this.world.hatchSpot);
-      this.toast('You hear water rising in an old well…', 'warn');
+      this.toastTo(alive[0], 'You hear water rising in an old well…', 'warn');
     }
     if (this.collapseT !== null) {
       this.collapseT -= dt;
       if (this.collapseT <= 0) { this.collapseT = 0; for (const s of this.survivors) if (s.alive) s.die('collapse'); this.collapseT = null; }
     }
+    this.noises = this.noises.filter((n) => this.time - n.t < 6);
+    if (this.scratches.length > 300) this.scratches.splice(0, this.scratches.length - 300);
+    while (this.scratches.length && this.time - this.scratches[0].t > 12) this.scratches.shift();
+    for (const s of this.survivors) if (s.alive) this.addScore(s, 'survival', 2 * dt);
+    this.present(dt);
+    this.net?.hostPost(dt);
+  }
+
+  // What this machine's player sees and hears: auras, the audio mix, the grade, the HUD.
+  // Runs on every machine, from the simulated state (host) or the replicated one (guest).
+  present(dt) {
+    const p = this.player, k = this.killer;
+    for (const b of this.bells) if (b.locked) { b.model.userData.light.intensity = 0.15; b.model.userData.halo.material.opacity = 0.03; }
+    for (const e of this.effects) e.update(dt);
+    if (this.effects.some((e) => e.done)) this.effects = this.effects.filter((e) => !e.done);
+    ui.skill.update(dt);
+    if (this.role === 'killer') return this.presentKiller(dt, grade.uniforms);
     // auras
     this.afterCD -= dt; this.auraT -= dt;
     if (p.hasPerk('kinship')) {
       const hooked = this.survivors.find((s) => s.health === 'hooked');
-      if (hooked && flatDist(hooked.post.pos, p.pos) < 24) { this.auraT = Math.max(this.auraT, 0.2); if (this.auraSrc !== 'afterimage' || this.auraT <= 0.2) this.auraSrc = 'kinship'; }
+      if (hooked && hooked.post && flatDist(hooked.post.pos, p.pos) < 24) { this.auraT = Math.max(this.auraT, 0.2); if (this.auraSrc !== 'afterimage' || this.auraT <= 0.2) this.auraSrc = 'kinship'; }
     }
     k.aura.visible = this.auraT > 0 && p.alive;
     for (const s of this.survivors) s.aura.visible = !s.isPlayer && s.alive && (s.health === 'hooked' || s.health === 'downed' || s.health === 'carried');
-    this.noises = this.noises.filter((n) => this.time - n.t < 6);
-    if (this.scratches.length > 300) this.scratches.splice(0, this.scratches.length - 300);
-    while (this.scratches.length && this.time - this.scratches[0].t > 12) this.scratches.shift();
-    if (p.alive) this.addScore('survival', 2 * dt);
 
     // atmosphere / audio mix
     const dK = flatDist(k.pos, p.pos);
@@ -990,14 +895,14 @@ class Game {
     this.chase += (chase - this.chase) * Math.min(1, dt * 1.5);
     audio.update(dt, {
       listener: camera.position, chase: this.chase,
-      breath: p.health === 'injured' || p.health === 'downed' ? 1 : p.resolve < 30 ? 0.6 : 0,
+      breath: p.health === 'injured' || p.health === 'downed' ? 1 : p.alive && p.resolve < 30 ? 0.6 : 0,
       lament: k.lament && p.watching ? 1 : 0,
     });
     // grading uniforms
     const u = grade.uniforms;
     const bl = p.blinkT > 0 ? Math.min(1, Math.min((p.blinkDur - p.blinkT) / 0.07, p.blinkT / 0.12)) : 0;
     u.uBlink.value = bl;
-    u.uLow.value = clamp(1 - p.resolve / (p.maxResolve * 0.4), 0, 1);
+    u.uLow.value = p.alive ? clamp(1 - p.resolve / (p.maxResolve * 0.4), 0, 1) : 0;
     u.uLament.value += ((k.lament && p.watching ? 1 : 0) - u.uLament.value) * Math.min(1, dt * 3);
     u.uHurt.value = p.health === 'injured' ? 0.6 : p.health === 'downed' || p.health === 'hooked' ? 1 : 0;
     u.uHit.value = this.hitShake;
@@ -1010,7 +915,8 @@ class Game {
     u.uFade.value = 1 - this.fadeIn;
     if (this.endT !== null) { this.endT -= dt; u.uFade.value = Math.max(u.uFade.value, clamp(1 - this.endT / 2.5, 0, 1)); if (this.endT <= 0) this.showEnd(); }
 
-    ui.prompt(this.promptText, this.promptProg, this.promptHeal);
+    if (this.spectate) ui.prompt(`Watching ${this.spectate.playerName || this.spectate.def.short}&nbsp;&nbsp;&nbsp;<kbd>Space</kbd> next&nbsp;&nbsp;&nbsp;<kbd>Esc</kbd> leave`, null, false);
+    else ui.prompt(localInput.promptText, localInput.promptProg, localInput.promptHeal);
     $('wiggle').style.display = p.health === 'carried' ? 'block' : 'none';
     if (p.health === 'carried') $('wiggle').querySelector('i').style.width = (p.wiggle * 100) + '%';
     ui.updateHud(this);
@@ -1024,7 +930,7 @@ class Game {
     W.sky.material.uniforms.uTime.value = this.time;
     W.sky.position.copy(camera.position);
     for (const L of this.flickers || []) L.intensity = (L.userData.base ??= L.intensity) * (0.85 + Math.sin(this.time * 11 + L.id) * 0.08 + (Math.random() - 0.5) * 0.1);
-    const focus = this.state === 'playing' ? this.player.pos : V(-4, 0, 0);
+    const focus = this.state === 'playing' && this.me ? (this.spectate || this.me).pos : V(-4, 0, 0);
     moon.target.position.set(focus.x, 0, focus.z);
     moon.position.copy(moon.target.position).addScaledVector(W.moonDir, 70);
     this.fx.ambient(dt, camera.position, W.pools);
@@ -1064,26 +970,39 @@ class Game {
     this.endT = null;
     this.state = 'ended';
     document.exitPointerLock?.();
-    const p = this.player;
+    const me = this.me, asKiller = this.role === 'killer';
     const verdict = $('verdict'), ep = $('epitaph');
-    const esc = p.health === 'escaped';
-    verdict.textContent = esc ? 'ESCAPED' : this.endReason === 'bled' ? 'BLED OUT' : this.endReason === 'collapse' ? 'THE MOOR ROSE' : this.endReason === 'canonized' ? 'CANONIZED' : 'SACRIFICED';
-    verdict.className = 'verdict ' + (esc ? 'good' : 'bad');
-    const lines = esc
-      ? ['You walked out through the lychgate and never looked back. You didn\'t dare to.', 'Behind you the bells kept ringing, though no one was pulling the ropes.', 'You climbed out of the Drowned Well, soaked and shaking, but alive.']
-      : ['The peat closed over your head. The bells will need a new mourner.', 'You blinked. That was all it took.', 'The moor keeps everything it is given.'];
-    ep.textContent = esc ? (this.endReason === 'hatch' ? lines[2] : lines[Math.floor(Math.random() * 2)]) : this.endReason === 'canonized' ? 'Your statue keeps the vigil now. It is still looking toward the gate.' : lines[Math.floor(Math.random() * 3)];
-    $('results').innerHTML = this.survivors.map((s) => {
+    const taken = this.survivors.filter((s) => s.health === 'dead').length;
+    let good, cats;
+    if (asKiller) {
+      good = taken >= 3;
+      verdict.textContent = taken >= 4 ? 'A MERCILESS VIGIL' : taken === 3 ? 'THE MOOR IS FED' : taken >= 1 ? 'THE BELLS RANG ON' : 'THEY ALL WALKED OUT';
+      ep.textContent = good ? 'The parish is quiet again. The stone settles back onto its plinth.' : 'Some of them reached the gate. The relic in your chest burns colder for it.';
+      cats = [['Brutality', 'brutality'], ['Devotion', 'devotion'], ['Cunning', 'cunning'], ['Dread', 'dread']];
+    } else {
+      const p = this.player, esc = p.health === 'escaped';
+      good = esc;
+      verdict.textContent = esc ? 'ESCAPED' : this.endReason === 'bled' ? 'BLED OUT' : this.endReason === 'collapse' ? 'THE MOOR ROSE' : this.endReason === 'canonized' ? 'CANONIZED' : p.alive ? 'THE VIGIL ENDS' : 'SACRIFICED';
+      const lines = esc
+        ? ['You walked out through the lychgate and never looked back. You didn\'t dare to.', 'Behind you the bells kept ringing, though no one was pulling the ropes.', 'You climbed out of the Drowned Well, soaked and shaking, but alive.']
+        : ['The peat closed over your head. The bells will need a new mourner.', 'You blinked. That was all it took.', 'The moor keeps everything it is given.'];
+      ep.textContent = esc ? (this.endReason === 'hatch' ? lines[2] : lines[Math.floor(Math.random() * 2)]) : this.endReason === 'canonized' ? 'Your statue keeps the vigil now. It is still looking toward the gate.' : p.alive ? 'The host has closed the vigil.' : lines[Math.floor(Math.random() * 3)];
+      cats = [['Objectives', 'objectives'], ['Survival', 'survival'], ['Altruism', 'altruism'], ['Boldness', 'boldness']];
+    }
+    verdict.className = 'verdict ' + (good ? 'good' : 'bad');
+    const who = (s) => (s.playerName ? `${s.playerName} · ${s.def.short}` : s.name) + (s.isPlayer ? ' (you)' : '');
+    let rows = this.survivors.map((s) => {
       const st = s.canonized ? ['Turned to stone', 'var(--blood-hi)'] : { escaped: ['Escaped', 'var(--ok)'], dead: ['Taken by the moor', 'var(--blood-hi)'] }[s.health] || ['Still on the moor', 'var(--muted)'];
-      return `<div class="r">${portrait(s.def, 42, s.health === 'dead' ? 'dead' : '')}<div><b>${s.name}${s.isPlayer ? ' (you)' : ''}</b><span style="color:${st[1]}">${st[0]}</span></div></div>`;
+      return `<div class="r">${portrait(s.def, 42, s.health === 'dead' ? 'dead' : '')}<div><b>${esc(who(s))}</b><span style="color:${st[1]}">${st[0]}</span></div></div>`;
     }).join('');
-    const sc = this.score;
-    const total = Math.round(sc.objectives + sc.survival + sc.altruism + sc.boldness);
+    if (this.killer.human) rows += `<div class="r"><div class="kport"></div><div><b>${esc(this.killer.playerName || 'The Reliquary')}${asKiller ? ' (you)' : ''}</b><span style="color:var(--ember)">The Reliquary · ${taken} taken</span></div></div>`;
+    $('results').innerHTML = rows;
+    const sc = me.score || {}, log = me.scoreLog || [];
+    const total = Math.round(cats.reduce((a, [, k]) => a + (sc[k] || 0), 0));
     $('emberTotal').textContent = total.toLocaleString();
-    $('score').innerHTML = [['Objectives', sc.objectives], ['Survival', sc.survival], ['Altruism', sc.altruism], ['Boldness', sc.boldness]]
-      .map(([l, v]) => `<div class="c"><div class="v">${Math.round(v).toLocaleString()}</div><div class="l">${l}</div></div>`).join('');
+    $('score').innerHTML = cats.map(([l, k]) => `<div class="c"><div class="v">${Math.round(sc[k] || 0).toLocaleString()}</div><div class="l">${l}</div></div>`).join('');
     const counts = {};
-    for (const e of this.scoreLog) { const k = e.replace(/ \+\d+$/, ''); counts[k] = (counts[k] || 0) + 1; }
+    for (const e of log) { const k = e.replace(/ \+\d+$/, ''); counts[k] = (counts[k] || 0) + 1; }
     $('scoreLog').innerHTML = Object.entries(counts).map(([k, n]) => `<div>${k}${n > 1 ? ` ×${n}` : ''}</div>`).join('') + `<div>Bells rung by the four: ${this.bellsRung} / 7</div>`;
     $('scoreLog').innerHTML += `<div>The Reliquary reached: ${TIER_NAMES[this.killer.tier]} · ${this.diff.name}</div>`;
     try {
@@ -1093,9 +1012,14 @@ class Game {
     const before = bank.get(); bank.add(total); const after = bank.get();
     $('rankEnd').textContent = `${after.toLocaleString()} embers banked · ${rankOf(after)}` + (rankOf(after) !== rankOf(before) ? ' (new rank)' : '');
     renderRank();
+    const online = this.mode !== 'solo';
+    $('againBtn').textContent = online ? 'Return to the Lobby' : 'Keep Another Vigil';
+    $('toTitleBtn').textContent = online ? 'Leave the Room' : 'Return to the Parish';
     ui.only('end');
   }
 }
+const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+Object.assign(Game.prototype, SurvivorControl);
 
 // ------------------------------------------------------------------ menus
 let chosen = 0;
@@ -1137,15 +1061,24 @@ document.querySelectorAll('[data-back]').forEach((b) => b.addEventListener('clic
   audio.uiClick();
   if (game?.state === 'paused') ui.only('hud', 'pause'); else ui.only('title');
 }));
+// A vigil kept alone: you and three teammates the game plays, against the Reliquary it plays too.
+function soloConfig() {
+  const order = [chosen, ...SURVIVORS.map((_, i) => i).filter((i) => i !== chosen)];
+  const realm = Math.floor(Math.random() * REALMS.length);
+  return {
+    mode: 'solo', seed: Math.floor(Math.random() * 1e9), realm, rain: REALMS[realm].rain ?? Math.random() < 0.5, diff: settings.difficulty,
+    survivors: order.map((def, k) => ({ def, me: k === 0, perks: k === 0 ? chosenPerks.slice() : [] })), killer: {},
+  };
+}
 $('startBtn').addEventListener('click', () => {
   audio.init(); audio.setVolume(settings.vol);
   try { localStorage.setItem('hollowmoor.loadout', JSON.stringify({ c: chosen, p: chosenPerks })); } catch { /* ignore */ }
   lock();
-  game.startMatch(chosen, chosenPerks.slice());
+  game.startMatch(soloConfig());
 });
 $('resumeBtn').addEventListener('click', () => game.resume());
 $('abandonBtn').addEventListener('click', () => game.abandon());
-$('againBtn').addEventListener('click', () => { lock(); game.startMatch(chosen, chosenPerks.slice()); });
+$('againBtn').addEventListener('click', () => { lock(); game.startMatch(soloConfig()); });
 $('toTitleBtn').addEventListener('click', () => { game.disposeMatch(); game.world = null; game.setupTitle(); });
 $('clickPlay').addEventListener('click', () => lock());
 
