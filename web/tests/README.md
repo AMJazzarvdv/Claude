@@ -10,3 +10,14 @@ NODE_PATH=$(npm root -g) node tests/balance.cjs 3 600     # 3 AI-only matches x 
 NODE_PATH=$(npm root -g) node tests/match-log.cjs 300     # timeline of one match
 ```
 Requires the `playwright` package and Chromium (`CHROME` overrides the path).
+
+Online play and the Reliquary role:
+
+```
+(cd server && npx wrangler dev --port 8787)             # the relay, locally
+NODE_PATH=$(npm root -g) node tests/multiplayer.cjs              # host + guest in two browsers: lobby, movement, gaze, actions, results (24 checks)
+NODE_PATH=$(npm root -g) node tests/multiplayer.cjs reliquary    # a guest plays the Reliquary (10 checks)
+NODE_PATH=$(npm root -g) node tests/multiplayer.cjs guestleaves  # a guest drops out mid-vigil
+NODE_PATH=$(npm root -g) node tests/reliquary.cjs                # playing the Reliquary alone (8 checks)
+```
+

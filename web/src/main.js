@@ -1433,6 +1433,7 @@ async function boot() {
   window.__G = game;
   window.__R = { renderer, scene, hemi, moon, get grade() { return grade; }, get bloom() { return bloom; }, camera };
   window.__input = { keys, pressed }; // used by the headless tests
+  window.__solo = soloConfig;
   window.__renderOnce = () => { grade.uniforms.uTime.value = performance.now() / 1000; composer.render(); renderMirror(); }; // one picture on demand (with __noRender)
   game.setupTitle();
   // warm up shaders before the curtain lifts

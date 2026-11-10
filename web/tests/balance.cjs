@@ -2,12 +2,14 @@ const { chromium } = require('playwright');
 (async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHROME || undefined, args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
   const page = await browser.newPage({ viewport: { width: 480, height: 270 } });
+  await page.addInitScript(() => { window.__noRender = true; });
   page.on('pageerror', (e) => console.log('pageerror: ' + e.message + '\n' + e.stack));
   await page.goto((process.env.BASE || 'http://localhost:8123') + '/index.html');
   await page.waitForFunction(() => window.__G && window.__G.state === 'title', null, { timeout: 120000 });
   for (let run = 0; run < Number(process.argv[2] || 2); run++) {
     await page.evaluate(() => { const G = window.__G; G.state = 'title'; });
-    await page.evaluate(() => window.__G.startMatch(0, ['unblinking']));
+    await page.evaluate(() => window.__G.startMatch(window.__solo()));
+    await page.waitForFunction(() => window.__G.state === 'intro', null, { timeout: 60000 });
     const out = await page.evaluate((secs) => {
       const G = window.__G; G.state = 'sim'; G.toast = () => {};
       G.player.updateAI = undefined; // player idle at spawn but hidden from the killer for this test

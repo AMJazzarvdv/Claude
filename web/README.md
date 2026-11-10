@@ -15,11 +15,33 @@ Everything is made from scratch in code. Nothing is downloaded at runtime except
 
 ## Play
 
-* **Hosted:** open `dist/index.html` from any static web server, for example `npx serve dist`. You can also open the single-file `dist/hollowmoor.html` the same way.
-* **Build from source:** run `npm install`, then `npm run build` (this writes `dist/`), then `npm run artifact` (this writes the single-file `dist/hollowmoor.html`).
+Three ways to keep the vigil:
+
+* **Alone as a Mourner**: you and three teammates the game plays, against the Reliquary it plays too.
+* **Alone as the Reliquary**: you are the statue, in first person, against four Mourners the game plays.
+* **Online**: open a room, share its code, and up to four Mourners and one Reliquary can be people. The game plays every place nobody takes.
+
+Where to run it:
+
+* **In a browser:** open `dist/index.html` from any static web server (for example `npx serve dist`), or the single-file `dist/hollowmoor.html`. Once the server below is deployed, its address serves the game too.
+* **As a desktop app:** see [desktop/](desktop/README.md). `npm run pack:win` there produces a folder with `Hollowmoor.exe`.
+* **Build from source:** `npm install`, then `npm run build` (writes `dist/`), then `npm run artifact` (writes the single-file `dist/hollowmoor.html`).
+
+## Online play
+
+One player's machine **hosts** the vigil: it runs every rule. Guests send it what their hands and eyes are doing and draw the snapshots it sends back about fifteen times a second, along with every sound, puff of dust and message. Two things keep it feeling direct:
+
+* a guest moves its own character at once and the host checks the result (too fast, or through something solid, and the host pulls it back);
+* the statue never stirs on a guest's screen while that guest is looking at it, even though the host hears of the look a moment late.
+
+A guest who leaves is replaced by the game. If the host leaves, the room closes.
+
+The [server/](server/README.md) is a small Cloudflare Worker: Durable Objects relay messages between the players in a room, a registry powers "Find a Vigil", and the same Worker serves the web build. The game finds it from, in order: a `?server=` address in the URL, the address typed under *Play Online → Server address*, the address stamped into the build (`HOLLOWMOOR_SERVER` or `server-url.txt` at build time), or the page's own origin when the Worker is serving it.
 
 ## Controls
-`WASD` move, mouse look, `Shift` sprint, `C`/`Ctrl` crouch, hold `E` or left mouse to ring/heal/unbind/open/shroud/search, `Space` to vault, drop pallets and hit toll checks, `F` or right mouse to use your item (hold for the mirror), hold `R` to mend, `B` to blink on purpose, `A`/`D` alternating to wiggle free, `Esc` to pause, `Space` to skip the opening.
+`WASD` move, mouse look, `Shift` sprint, `C`/`Ctrl` crouch, hold `E` or left mouse to ring/heal/unbind/open/shroud/search, `Space` to vault, drop pallets and hit toll checks, `F` or right mouse to use your item (hold for the mirror), hold `R` to mend, `B` to blink on purpose, `G` or middle mouse to point something out to teammates (online), `A`/`D` alternating to wiggle free, `Esc` to pause, `Space` to skip the opening.
+
+As the Reliquary: `WASD` and mouse, left mouse to strike, `E` to lift / bind / canonize / break a pallet / silence a bell, `Space` to climb through a window, `Q` to leave a Sentinel, `F` to step into the Sentinel or statue you are aiming at.
 
 ## How a vigil works
 Ring 5 of 7 Mourning Bells (watch for toll checks), open a Lychgate, and walk out before the moor rises. The Reliquary is stone while it is on your screen with clear line of sight. Watching it drains your Resolve until you blink. After it has been held still for a while it Laments and lunges harder when released. It plants Sentinel copies and can jump into any copy nobody is watching. Only the real one's relic smoulders. Shroud a Sentinel to seal it, or shroud the real one to blind it.
@@ -40,4 +62,4 @@ Its head always turns toward the nearest survivor while unseen, it leaves cracke
 * Each match opens with a short cinematic of the realm. **Difficulty**: Mercy, Vigil, Penance. Embers bank across vigils into ranks.
 
 ## Source map
-`src/main.js` renderer, post-FX, input, camera, gaze system, match flow · `src/entities.js` survivors and teammate AI, bells, pallets, posts, gates · `src/killer.js` the Reliquary AI and Sentinels · `src/world.js` map generation, collision, line of sight and A* navigation · `src/ui.js` HUD, perks and toll checks · `src/fx.js` particles, crack decals, shockwaves · `src/items.js` chests and items · `src/crows.js` crows · `src/weather.js` lightning and rain · `src/models/` survivor, Reliquary, props and shared model code · `tests/` headless checks.
+`src/main.js` renderer, post-FX, input, camera, gaze, match flow, menus and lobby · `src/control.js` how a person steers a survivor (local or remote) · `src/killerplay.js` playing the Reliquary yourself · `src/entities.js` survivors and teammate AI, bells, pallets, posts, gates · `src/killer.js` the Reliquary (rules and AI) and Sentinels · `src/net.js` rooms, lobby, host and guest sides of a vigil · `src/replicate.js` snapshots and mirrored events · `src/world.js` map generation, collision, line of sight and A* navigation · `src/ui.js` HUD, perks and toll checks · `src/fx.js` particles and decals · `src/items.js` chests and items · `src/crows.js` · `src/weather.js` · `src/models/` survivor, Reliquary, props and shared model code · `server/` the Cloudflare Worker · `desktop/` the Electron shell · `tests/` headless checks.
