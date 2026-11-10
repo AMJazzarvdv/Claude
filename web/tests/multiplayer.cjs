@@ -35,9 +35,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await until(H, () => Object.keys(window.__net.lobby.players).length === 2);
   let r = await H.evaluate(() => ({ seats: window.__net.lobby.seats.map((s) => (s ? window.__net.lobby.players[s].name : null)), can: window.__net.canStart() }));
   check('Lobby seats both players; host waits for the guest to be ready', r.seats[0] === 'Hosty' && r.seats[1] === 'Guesty' && !r.can, r);
-  // the guest moves to the third Mourner, then readies up
-  await C.click('.seat[data-seat="2"]');
-  await until(H, () => window.__net.lobby.seats[2] && !window.__net.lobby.seats[1]);
+  // the guest moves to another place (the third Mourner, or the Reliquary), then readies up
+  const seat = MODE === 'reliquary' ? 4 : 2;
+  await C.click(`.seat[data-seat="${seat}"]`);
+  await until(H, (i) => window.__net.lobby.seats[i] && !window.__net.lobby.seats[1], seat);
   await C.click('#lobbyGo');
   check('Guest picks another place and readies; host may begin', await until(H, () => window.__net.canStart()), await H.evaluate(() => window.__net.lobby.seats));
   await H.click('#lobbyGo');
@@ -45,6 +46,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // ---- the vigil begins on both machines
   const inGame = (p) => until(p, () => ['intro', 'playing'].includes(window.__G.state), null, 120000);
   check('Both machines build the same vigil', (await inGame(H)) && (await inGame(C)));
+  if (MODE === 'reliquary') return reliquaryGuest(H, C, until, inGame, browser);
   r = await Promise.all([H, C].map((p) => p.evaluate(() => { const W = window.__G.world; let h = 0; for (const b of W.boxes) h = (h * 31 + Math.round(b.minX * 100) + Math.round(b.maxZ * 100) * 7) | 0; return { n: W.boxes.length, h, mode: window.__G.mode, role: window.__G.role, me: window.__G.survivors.indexOf(window.__G.player) }; })));
   check('Host and guest generated identical worlds', r[0].n === r[1].n && r[0].h === r[1].h && r[0].mode === 'host' && r[1].mode === 'client' && r[0].me === 0 && r[1].me === 2, r);
   // the host skips the opening once the guest has loaded; the guest follows on the host's word
@@ -132,3 +134,53 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   console.log(results.join('\n'));
   await browser.close();
 })().catch((e) => { console.log(results.join('\n')); console.error(e); process.exit(1); });
+
+// A guest plays the Reliquary against the host and three Mourners the game plays.
+async function reliquaryGuest(H, C, until, inGame, browser) {
+  let r = await Promise.all([H.evaluate(() => ({ human: window.__G.killer.human, input: !!window.__G.killer.input, role: window.__G.role })), C.evaluate(() => ({ role: window.__G.role, me: window.__G.me === window.__G.killer, hud: !document.getElementById('killerHud').hidden }))]);
+  check('The guest is the Reliquary on both machines', r[0].human && r[0].input && r[0].role === 'survivor' && r[1].role === 'killer' && r[1].me && r[1].hud, r);
+  for (let i = 0; i < 60 && (await H.evaluate(() => window.__G.state)) !== 'playing'; i++) { await H.keyboard.press('Space'); await sleep(500); }
+  await until(C, () => window.__G.state === 'playing', null, 30000);
+  // open ground, everyone else far away with their backs turned
+  await H.evaluate(() => {
+    const G = window.__G, k = G.killer, W = G.world;
+    for (const s of G.survivors) { s.updateAI = () => { s.speed = 0; }; s.cancelAction(); }
+    let sp = null;
+    for (let n = 0; n < 400 && !sp; n++) { const q = W.randomFreePoint(Math.random, 0, 25, 0, 0); let ok = true; for (let a = 0; a < 8 && ok; a++) ok = W.raycast(k.pos.clone().set(q.x, 1.2, q.z), k.pos.clone().set(q.x + Math.sin(a * 0.785) * 7, 1.2, q.z + Math.cos(a * 0.785) * 7)) >= 0.999; if (ok) sp = q; }
+    k.pos.set(sp.x, 0, sp.z);
+    G.survivors.forEach((s, i) => s.pos.set((sp.x > 0 ? -44 : 40) + i * 1.2, 0, sp.z > 0 ? -44 : 44));
+    window.__see = G.canSee; G.canSee = () => false;
+  });
+  await sleep(900);
+  const p0 = await H.evaluate(() => [window.__G.killer.pos.x, window.__G.killer.pos.z]);
+  await C.evaluate(() => { const G = window.__G; G.camYaw = 0; G.camPitch = 0; window.__input.keys.add('KeyW'); });
+  await sleep(2000);
+  await C.evaluate(() => window.__input.keys.delete('KeyW'));
+  await sleep(700);
+  r = await Promise.all([H, C].map((p) => p.evaluate(() => [window.__G.killer.pos.x, window.__G.killer.pos.z])));
+  let moved = Math.hypot(r[0][0] - p0[0], r[0][1] - p0[1]), apart = Math.hypot(r[0][0] - r[1][0], r[0][1] - r[1][1]);
+  check('Unseen, the guest walks the Reliquary and the host follows', moved > 3 && apart < 0.8, { moved: +moved.toFixed(2), apart: +apart.toFixed(2) });
+  // seen: it cannot take a step, on either machine
+  await H.evaluate(() => { window.__G.canSee = (s) => s.alive; });
+  await until(C, () => window.__G.killer.petrified, null, 6000);
+  const p1 = await H.evaluate(() => [window.__G.killer.pos.x, window.__G.killer.pos.z]);
+  await C.evaluate(() => window.__input.keys.add('KeyW'));
+  await sleep(1500);
+  await C.evaluate(() => window.__input.keys.delete('KeyW'));
+  await sleep(500);
+  r = await Promise.all([H, C].map((p) => p.evaluate(() => [window.__G.killer.pos.x, window.__G.killer.pos.z, window.__G.killer.petrified])));
+  moved = Math.hypot(r[0][0] - p1[0], r[0][1] - p1[1]); apart = Math.hypot(r[0][0] - r[1][0], r[0][1] - r[1][1]);
+  const seenText = await C.evaluate(() => document.getElementById('kSeenText').textContent);
+  check('Seen, the guest\'s Reliquary is stone on both machines', moved < 0.05 && apart < 0.5 && r[1][2] && /WATCHED|LAMENTING|TOLLING/.test(seenText), { moved: +moved.toFixed(3), apart: +apart.toFixed(2), seenText });
+  // a strike from the guest lands on the host
+  await H.evaluate(() => { const G = window.__G, k = G.killer, s = G.survivors[1]; G.canSee = () => false; s.pos.set(k.pos.x, 0, k.pos.z + 1.9); s.yaw = 0; k.cooldown = 0; });
+  await sleep(700);
+  await C.evaluate(() => { const G = window.__G; G.camYaw = 0; G.camPitch = 0; });
+  let hit = false;
+  for (let i = 0; i < 6 && !hit; i++) { await C.evaluate(() => window.__input.pressed.add('Mouse0')); hit = await until(H, () => window.__G.survivors[1].health !== 'healthy', null, 1500); }
+  check('The guest strikes; the Mourner on the host is wounded', hit, await H.evaluate(() => ({ h: window.__G.survivors[1].health, sc: window.__G.killer.score.brutality })));
+  await H.evaluate(() => { const G = window.__G, k = G.killer; G.noise(k.pos.clone().add({ x: 5, y: 0, z: 0 }), 30, 'pallet'); });
+  check('Sounds near the Reliquary are marked on the guest\'s screen', await until(C, () => (window.__G.pings || []).length > 0, null, 5000));
+  console.log(results.join('\n'));
+  await browser.close();
+}
