@@ -10,9 +10,10 @@ const check = (name, ok, info = '') => results.push(`${ok ? 'PASS' : 'FAIL'}  ${
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 (async () => {
-  const browser = await chromium.launch({ executablePath: process.env.CHROME || undefined, args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+  // PROXY=http://host:port runs the browsers through a proxy (to test a deployed server from a restricted network)
+  const browser = await chromium.launch({ executablePath: process.env.CHROME || undefined, args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'], proxy: process.env.PROXY ? { server: process.env.PROXY } : undefined });
   const open = async (name) => {
-    const ctx = await browser.newContext({ viewport: { width: 480, height: 270 } });
+    const ctx = await browser.newContext({ viewport: { width: 480, height: 270 }, ignoreHTTPSErrors: !!process.env.PROXY });
     await ctx.addInitScript(() => { window.__noRender = true; try { localStorage.setItem('hollowmoor.settings', JSON.stringify({ quality: 'low', vol: 0 })); } catch { /* ignore */ } });
     const page = await ctx.newPage();
     page.on('pageerror', (e) => results.push(`pageerror(${name}): ${e.message} ${(e.stack || '').split('\n')[1] || ''}`));
