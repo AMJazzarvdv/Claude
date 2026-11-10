@@ -300,6 +300,8 @@ export class Killer {
       const sc = d + (s.health === 'downed' ? -4 : 0) + (s === this.target ? -5 : 0) + (s.health === 'injured' ? -1 : 0);
       if (sc < bs) { bs = sc; best = s; }
     }
+    // it knows where the one it just struck down fell, even with a sill or a pallet between them
+    if (!best && this.target && this.target.health === 'downed' && flatDist(this.target.pos, this.pos) < 7) best = this.target;
     // The Last Rite: after four bells it senses survivors whose eyes are failing
     if (!best && G.bellsRung >= 4) {
       for (const s of G.survivors) if (s.standing && s.resolve < 25 && flatDist(s.pos, this.pos) < 40) { best = s; break; }
@@ -398,11 +400,12 @@ export class Killer {
       if (a.t >= a.dur) {
         const t = a.target;
         this.action = null;
-        if (t.standing && !t.vault && flatDist(t.pos, this.pos) < 3.0 && G.world.lineOfSight(this.eye(), t.chest())) {
+        if (t && t.standing && !t.vault && flatDist(t.pos, this.pos) < 3.0 && G.world.lineOfSight(this.eye(), t.chest())) {
           const r = t.hit();
           this.cooldown = 2.0;
           G.fx.dust(t.chest(), 8);
           if (r === 'downed') G.toast(`${t.name} is down`, 'bad');
+          if (r !== 'immune') G.addScore(this, 'brutality', r === 'downed' ? 600 : 300, r === 'downed' ? 'Struck down' : 'Struck');
         } else { this.cooldown = 1.4; G.audio.vault(this.pos.clone().setY(1.5), false); }
       }
     } else if (a.type === 'pickup') {
@@ -422,18 +425,19 @@ export class Killer {
       if (Math.random() < dt * 10) G.fx.dust(t.chest(), 2);
       if (a.t >= a.dur) {
         this.action = null; t.endCanonize(true);
+        G.addScore(this, 'devotion', 1500, 'Canonized');
         this.target = null; this.state = 'patrol'; this.goal = null;
       }
     } else if (a.type === 'hook') {
       if (a.t >= a.dur) {
         this.action = null;
         const s = this.carrying; this.carrying = null;
-        if (s && !a.post.occupant) s.hook(a.post); else if (s) { s.health = 'downed'; s.pos.copy(this.pos); }
+        if (s && !a.post.occupant) { s.hook(a.post); G.addScore(this, 'devotion', 800, 'Bound to a post'); } else if (s) { s.health = 'downed'; s.pos.copy(this.pos); }
         this.target = null; this.state = 'patrol'; this.goal = null;
       }
     } else if (a.type === 'break') {
       if (a.pallet.state !== 'down') { this.action = null; return; }
-      if (a.t >= a.dur) { this.action = null; a.pallet.break(); }
+      if (a.t >= a.dur) { this.action = null; a.pallet.break(); G.addScore(this, 'cunning', 200, 'Pallet broken'); }
     } else if (a.type === 'vault') {
       const f = Math.min(1, a.t / a.dur);
       this.pos.lerpVectors(a.from, a.to, f); this.pos.y = Math.sin(f * Math.PI) * 0.6;
@@ -442,19 +446,26 @@ export class Killer {
       if (a.t >= a.dur) {
         this.action = null;
         a.bell.regress = true; a.bell.progress = Math.max(0, a.bell.progress - 0.04);
+        G.addScore(this, 'cunning', 150, 'Bell silenced');
         G.audio.chime(a.bell.pos.clone().setY(2.5), 140, 0.5); G.audio.settle(a.bell.pos.clone().setY(1));
         this.goal = null; this.state = 'patrol';
       }
     } else if (a.type === 'plant') {
       if (a.t >= a.dur) {
         this.action = null; this.plantCD = 35 + Math.random() * 15;
-        const p = this.pos.clone().addScaledVector(this.forward(), 1.4);
-        const c = G.world.cellIndex(p.x, p.z);
-        const nearBell = G.bells.some((b) => flatDist(b.pos, p) < 2.8);
-        if (c >= 0 && G.world.grid[c] === 0 && !nearBell) {
+        // in front if there is room, otherwise beside or behind
+        let p = null;
+        for (const a of [0, 0.9, -0.9, 1.8, -1.8, Math.PI]) {
+          const q = this.pos.clone().add(V(Math.sin(this.yaw + a) * 1.4, 0, Math.cos(this.yaw + a) * 1.4));
+          const c = G.world.cellIndex(q.x, q.z);
+          if (c >= 0 && G.world.grid[c] === 0 && !G.bells.some((b) => flatDist(b.pos, q) < 2.8)) { p = q; break; }
+        }
+        if (!p) this.plantCD = 4; // no room here: try again in a moment
+        else {
           const poses = ['pray', 'tilt', 'beckon', 'reach', 'weep'];
           G.sentinels.push(new Sentinel(G, p, this.yaw + Math.PI + (Math.random() - 0.5), poses[Math.floor(Math.random() * poses.length)]));
           G.audio.stoneShift(p.clone().setY(1), 0.35);
+          G.addScore(this, 'cunning', 150, 'Sentinel planted');
         }
         this.goal = null; this.state = 'patrol';
       }
@@ -483,9 +494,16 @@ export class Killer {
       if (d < bd && flatDist(m.pos, this.pos) > 15 && !G.isWatched(m.samplePoints())) { bd = d; best = m; }
     }
     if (!best) return false;
+    this.transferInto(best, goal);
+    return true;
+  }
+
+  // Step into a Sentinel (swapping places with it) or out of a canonized survivor's statue.
+  transferInto(best, goal) {
+    const G = this.G;
     const op = this.pos.clone(), oy = this.yaw, opose = this.poseName;
     if (best.isMemorial) {
-      const dir = V(goal.x - best.pos.x, 0, goal.z - best.pos.z).normalize();
+      const dir = V(goal.x - best.pos.x, 0, goal.z - best.pos.z); if (dir.lengthSq() < 1e-6) dir.set(Math.sin(this.yaw), 0, Math.cos(this.yaw)); dir.normalize();
       const p = best.pos.clone().addScaledVector(dir, 1.1);
       G.world.collide(p, 0.45, G.killerCircles());
       this.pos.copy(p); this.yaw = Math.atan2(dir.x, dir.z);
@@ -497,7 +515,8 @@ export class Killer {
     }
     G.audio.stoneShift(op.clone().setY(1.2), 0.5); G.audio.stoneShift(this.pos.clone().setY(1.2), 0.5);
     this.transferCD = 30; this.path = null;
-    return true;
+    if (this.net) this.net.epoch++; // a person playing it from afar must take the new place
+    G.addScore(this, 'cunning', 200, 'Stepped through stone');
   }
 
   // Move toward a point using the nav grid; handles windows and pallets.

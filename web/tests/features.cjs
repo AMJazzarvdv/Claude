@@ -8,6 +8,7 @@ const check = (name, ok, info = '') => results.push(`${ok ? 'PASS' : 'FAIL'}  ${
 (async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHROME || undefined, args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
   const page = await browser.newPage({ viewport: { width: 800, height: 450 } });
+  await page.addInitScript(() => { window.__noRender = true; }); // the rules are tested, not the pictures
   page.on('pageerror', (e) => results.push('pageerror: ' + e.message + ' ' + (e.stack || '').split('\n')[1]));
   await page.goto(BASE + '/index.html', { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => window.__G && window.__G.state === 'title', null, { timeout: 120000 });
@@ -16,7 +17,7 @@ const check = (name, ok, info = '') => results.push(`${ok ? 'PASS' : 'FAIL'}  ${
   // difficulty picker
   await page.click('[data-go=select]');
   await page.click('.diff[data-d=penance]');
-  let r = await ev(() => document.querySelector('.diff.sel')?.dataset.d);
+  let r = await ev(() => document.querySelector('#diffs .diff.sel')?.dataset.d);
   check('Difficulty picker selects Penance', r === 'penance', r);
   await page.click('.diff[data-d=vigil]');
 

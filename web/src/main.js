@@ -267,6 +267,7 @@ class Game {
     this.memorials = []; this.chests = []; this.projectiles = []; this.effects = []; this.candle = null; this.crows = null;
     this.spectate = null; this.menu = false; this.seeT = 0;
     document.body.classList.remove('as-killer');
+    $('killerHud').hidden = true; $('markers').innerHTML = ''; this.pings = [];
     $('mirrorFrame').hidden = true;
     this.fx.clear();
   }
@@ -342,7 +343,8 @@ class Game {
     this.killer = new Killer(this);
     const kc = cfg.killer || {};
     this.killer.human = !!(kc.me || kc.peer); this.killer.peer = kc.peer || null; this.killer.playerName = kc.name || '';
-    if (kc.me) this.killer.input = localInput;
+    if (this.killer.human) { this.killer.score = { brutality: 0, devotion: 0, cunning: 0, dread: 0 }; this.killer.scoreLog = []; }
+    if (kc.me) { this.killer.input = localInput; this.killer.model.visible = false; } // you look out through its eyes
     else if (kc.peer && sim) { this.killer.input = net.remoteInput(kc.peer); this.killer.net = { epoch: 1, free: false, pos: V(), t: 0 }; }
     this.role = kc.me ? 'killer' : 'survivor';
     this.me = kc.me ? this.killer : this.player;
@@ -380,6 +382,7 @@ class Game {
     ui.clearToasts();
     $('fps').style.display = settings.showFps ? 'block' : 'none';
     document.body.classList.toggle('as-killer', this.role === 'killer');
+    $('killerHud').hidden = this.role !== 'killer'; this.pings = []; this.killerSeen = false;
     ui.show('loading', false);
     this.updateItemHud(); this.updateTierHud();
     net?.onMatchBuilt();
@@ -586,6 +589,7 @@ class Game {
       if (s.noBlink <= 0) s.forceBlink(0.9);
       s.resolve = Math.max(0, s.resolve - 25);
       this.feel(s, 'toll');
+      this.addScore(k, 'dread', 100, 'Eyes forced shut');
     }
     this.fx.shockwave(k.pos, 24);
     this.audio.tollRelease(head);
@@ -659,6 +663,7 @@ class Game {
   onSurvivorHooked(s) { this.hookEvents++; this.toast(`${s.name} is bound to a Weeping Post`, 'bad'); }
   onSurvivorDied(s, how) {
     this.deaths = (this.deaths || 0) + 1; s.fate = how;
+    if (how === 'sacrificed') this.addScore(this.killer, 'devotion', 1500, 'Given to the moor');
     this.toast(how === 'canonized' ? `${s.name} was canonized. Their statue joins the vigil.` : `${s.name} ${how === 'bled' ? 'bled out in the peat' : 'was taken by the moor'}`, 'bad');
     this.sealed(s, how);
     this.checkAllDone();
@@ -1085,11 +1090,19 @@ const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 Object.assign(Game.prototype, SurvivorControl, KillerControl);
 
 // ------------------------------------------------------------------ menus
-let chosen = 0;
+let chosen = 0, soloRole = 'survivor';
 let chosenPerks = ['unblinking', 'afterimage', 'ropeburn', 'kinship'];
 try { const s = JSON.parse(localStorage.getItem('hollowmoor.loadout') || 'null'); if (s) { chosen = s.c ?? 0; chosenPerks = s.p ?? chosenPerks; } } catch { /* ignore */ }
 
 function buildSelect() {
+  const asK = soloRole === 'killer';
+  const rr = $('roleRow');
+  rr.innerHTML = `<button type="button" class="diff ${asK ? '' : 'sel'}" data-r="survivor"><b>A Mourner</b><span>Ring the bells and walk out alive.</span></button><button type="button" class="diff ${asK ? 'sel' : ''}" data-r="killer"><b>The Reliquary</b><span>Be the stone. Move when they blink.</span></button>`;
+  rr.querySelectorAll('.diff').forEach((b) => b.onclick = () => { soloRole = b.dataset.r; audio.uiClick(); buildSelect(); });
+  $('mournerBox').style.display = asK ? 'none' : '';
+  $('selectTitle').textContent = asK ? 'Be the Reliquary' : 'Choose your Mourner';
+  $('selectSub').textContent = asK ? 'Four Mourners will try to ring five bells and leave. Do not let them.' : 'Three others will keep the vigil with you. The Reliquary will be waiting.';
+  $('startBtn').textContent = asK ? 'Wake on the Moor' : 'Enter the Moor';
   const sc = $('survivorCards');
   sc.innerHTML = SURVIVORS.map((d, i) => `<div class="card ${i === chosen ? 'sel' : ''}" data-i="${i}">${portrait(d, 64)}<div><b>${d.name}</b><div class="t">${d.title}</div><div class="bio">${d.bio}</div></div></div>`).join('');
   sc.querySelectorAll('.card').forEach((c) => c.onclick = () => { chosen = Number(c.dataset.i); audio.uiClick(); buildSelect(); });
@@ -1127,11 +1140,12 @@ document.querySelectorAll('[data-back]').forEach((b) => b.addEventListener('clic
 }));
 // A vigil kept alone: you and three teammates the game plays, against the Reliquary it plays too.
 function soloConfig() {
+  const asK = soloRole === 'killer';
   const order = [chosen, ...SURVIVORS.map((_, i) => i).filter((i) => i !== chosen)];
   const realm = Math.floor(Math.random() * REALMS.length);
   return {
     mode: 'solo', seed: Math.floor(Math.random() * 1e9), realm, rain: REALMS[realm].rain ?? Math.random() < 0.5, diff: settings.difficulty,
-    survivors: order.map((def, k) => ({ def, me: k === 0, perks: k === 0 ? chosenPerks.slice() : [] })), killer: {},
+    survivors: order.map((def, k) => ({ def, me: !asK && k === 0, perks: !asK && k === 0 ? chosenPerks.slice() : [] })), killer: { me: asK },
   };
 }
 $('startBtn').addEventListener('click', () => {

@@ -129,13 +129,15 @@ export class UI {
     const now = performance.now();
     const p = G.player;
     // resolve meter every frame (it is smooth)
-    const f = p.resolve / p.maxResolve;
-    $('resolveArc').setAttribute('stroke-dashoffset', String(176 * (1 - f)));
-    $('resolveArc').setAttribute('stroke', f < 0.25 ? '#e0483c' : f < 0.5 ? '#e8a24a' : '#d9cfbd');
-    $('pupil').setAttribute('r', String(p.watching ? 6.5 : 4.5));
-    const rs = $('resolve');
-    rs.classList.toggle('full', f > 0.99 && !p.watching);
-    rs.classList.toggle('lament', G.killer.lament && p.watching);
+    if (p) {
+      const f = p.resolve / p.maxResolve;
+      $('resolveArc').setAttribute('stroke-dashoffset', String(176 * (1 - f)));
+      $('resolveArc').setAttribute('stroke', f < 0.25 ? '#e0483c' : f < 0.5 ? '#e8a24a' : '#d9cfbd');
+      $('pupil').setAttribute('r', String(p.watching ? 6.5 : 4.5));
+      const rs = $('resolve');
+      rs.classList.toggle('full', f > 0.99 && !p.watching);
+      rs.classList.toggle('lament', G.killer.lament && p.watching);
+    }
     if (now - this.lastHud < 100) return;
     this.lastHud = now;
     $('bellCount').textContent = String(Math.max(0, G.bellsRequired - G.bellsRung));
@@ -151,7 +153,7 @@ export class UI {
       if (st === 'downed') row.hbi.style.width = (100 * s.bleed / 240) + '%';
     });
     // perk cooldowns
-    if (this.perkEls) {
+    if (this.perkEls && p) {
       for (const [id, el] of Object.entries(this.perkEls)) {
         let cd = 0, active = false;
         if (id === 'afterimage') { cd = Math.max(0, G.afterCD) / 30; active = G.auraT > 0 && G.auraSrc === 'afterimage'; }

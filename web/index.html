@@ -225,6 +225,32 @@
   label.check { display: flex; gap: 10px; align-items: center; margin-top: 16px; color: var(--muted); font-size: 13.5px; cursor: pointer; }
   #introWait { position: absolute; left: 50%; bottom: calc(11vh + 6px); transform: translateX(-50%); font-family: 'Cormorant Garamond', serif; font-style: italic; font-size: 18px; color: var(--ember); }
   #netNote { position: absolute; top: 10px; right: 14px; font-size: 11px; letter-spacing: 0.14em; color: var(--muted); text-transform: uppercase; }
+  /* playing the Reliquary */
+  #killerHud { position: absolute; inset: 0; pointer-events: none; }
+  #killerHud[hidden] { display: none; }
+  #kSeen { position: absolute; left: 50%; bottom: 122px; transform: translateX(-50%); text-align: center; opacity: 0; transition: opacity .15s; }
+  #kSeen.on { opacity: 1; }
+  #kSeenText { font-family: Cinzel, serif; letter-spacing: 0.3em; font-size: 15px; color: #cfd6e2; text-shadow: 0 0 12px rgba(160,190,230,0.6); }
+  #kSeen .pb { width: 180px; height: 3px; background: rgba(255,255,255,0.14); margin: 8px auto 0; }
+  #kSeen .pb i { display: block; height: 100%; width: 0; background: #cfd6e2; }
+  #kSeen .pb.toll i { background: var(--ember); }
+  #kSlots { position: absolute; right: 26px; bottom: 26px; display: flex; gap: 10px; }
+  .ks { width: 78px; padding: 8px 6px; border: 1px solid var(--line); background: rgba(0,0,0,0.45); text-align: center; position: relative; overflow: hidden; opacity: 0.55; }
+  .ks.ready { opacity: 1; border-color: rgba(232,162,74,0.6); }
+  .ks b { display: block; font-family: Cinzel, serif; color: var(--ember); font-size: 13px; }
+  .ks span { font-size: 10px; letter-spacing: 0.08em; color: var(--muted); text-transform: uppercase; }
+  .ks .cd { position: absolute; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.6); }
+  #markers { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+  #markers i { position: absolute; left: 0; top: 0; width: 22px; height: 22px; margin: -11px 0 0 -11px; font: 700 12px/22px Cinzel, serif; font-style: normal; text-align: center; color: #14100a; border-radius: 50%; }
+  #markers i.ping { background: var(--ember); animation: pingPulse 1s infinite; }
+  @keyframes pingPulse { 0% { box-shadow: 0 0 0 0 rgba(232,162,74,0.7); } 100% { box-shadow: 0 0 0 16px rgba(232,162,74,0); } }
+  #markers i.body { width: 12px; height: 12px; margin: -6px 0 0 -6px; border: 2px solid rgba(190,205,225,0.7); border-radius: 2px; rotate: 45deg; }
+  #markers i.body.aim { width: 24px; height: 24px; margin: -12px 0 0 -12px; line-height: 20px; border-color: var(--ember); background: rgba(232,162,74,0.22); color: var(--ember); border-radius: 50%; rotate: 0deg; }
+  #markers i.bound { width: 12px; height: 12px; margin: -6px 0 0 -6px; background: var(--blood-hi); }
+  #markers i.post { width: 14px; height: 14px; margin: -7px 0 0 -7px; border: 2px solid var(--blood-hi); }
+  #markers i.off { opacity: 0.6; scale: 0.8; }
+  body.as-killer #resolve, body.as-killer #perkHud, body.as-killer #itemSlot, body.as-killer #wiggle { display: none !important; }
+  @media (prefers-reduced-motion: reduce) { #markers i.ping { animation: none; } }
   @media (prefers-reduced-motion: reduce) { .toast, .srow.hooked .ring, #tierPips i.on, #itemSlot, .results > * { animation: none !important; } }
 </style>
 </head>
@@ -253,11 +279,14 @@
 
 <section id="select" class="screen panelwrap">
   <div class="panel">
-    <h2>Choose your Mourner</h2>
-    <p class="muted">Three others will keep the vigil with you. The Reliquary will be waiting.</p>
-    <div class="survivors" id="survivorCards"></div>
-    <h3>Perks <span class="count" id="perkCount">0 / 4</span></h3>
-    <div class="perks" id="perkCards"></div>
+    <h2 id="selectTitle">Choose your Mourner</h2>
+    <p class="muted" id="selectSub">Three others will keep the vigil with you. The Reliquary will be waiting.</p>
+    <div class="diffs" id="roleRow"></div>
+    <div id="mournerBox">
+      <div class="survivors" id="survivorCards" style="margin-top:14px"></div>
+      <h3>Perks <span class="count" id="perkCount">0 / 4</span></h3>
+      <div class="perks" id="perkCards"></div>
+    </div>
     <h3>Difficulty</h3>
     <div class="diffs" id="diffs"></div>
     <div class="actions">
@@ -316,6 +345,11 @@
     <h3>Relics and omens</h3>
     <p>Search the <b>reliquary chests</b> for one item. The <b>Hand Mirror</b> lets you watch what's behind you while you walk away. A <b>Votive Candle</b> casts a light that stops it from Lamenting or tolling nearby. <b>Holy Water</b> shatters a Sentinel or scalds the Reliquary. <b>Linen Bandages</b> heal you in seconds.</p>
     <p><b>Crows</b> scatter when you run past them, and the Reliquary hears them. They scatter when the stone moves near them, too. Stone cracks mark the ground where it has walked. <b>Lightning</b> shows you its outline wherever it stands. If it moved while your eyes were shut, a pale <b>afterimage</b> shows where it stood before.</p>
+    <h3>Being the Reliquary</h3>
+    <p>You can <b>play the Reliquary</b> yourself, alone against four Mourners the game plays, or online against your friends. You look out through its mask. While any Mourner can see you, you are stone: you can turn your eyes, but you cannot take a step. Unseen, you are faster than they are, and you surge when prey is close ahead.</p>
+    <p><kbd>Left Mouse</kbd> strikes. <kbd>E</kbd> lifts a fallen Mourner, binds the one you carry to a Weeping Post, breaks a dropped pallet, silences a half-rung bell, or canonizes someone who has been bound twice. <kbd>Space</kbd> climbs through a window. <kbd>Q</kbd> leaves a Sentinel behind. Aim at a Sentinel or a canonized statue that nobody is watching and press <kbd>F</kbd> to step into it. Sounds the Mourners make are marked on your screen.</p>
+    <h3>Keeping the vigil together</h3>
+    <p><b>Play Online</b> opens a room with a code to share. Up to four Mourners and one Reliquary can be people; the game plays every place left open. The player who opens the room hosts the vigil, so the room closes if they leave.</p>
     <h3>Controls</h3>
     <table class="keys">
       <tr><td><kbd>W A S D</kbd> move &nbsp; <kbd>Mouse</kbd> look</td><td><kbd>Shift</kbd> sprint &nbsp; <kbd>C</kbd> / <kbd>Ctrl</kbd> crouch</td></tr>
@@ -396,6 +430,15 @@
   <div id="prompt"><div class="p" id="promptText"></div><div class="pb" id="promptBar"><i></i></div></div>
   <div id="status"></div>
   <div id="perkHud"></div>
+  <div id="killerHud" hidden>
+    <div id="kSeen"><div id="kSeenText"></div><div class="pb"><i id="kLament"></i></div></div>
+    <div id="kSlots">
+      <div class="ks" id="kStrike"><b>Click</b><span>Strike</span><div class="cd"></div></div>
+      <div class="ks" id="kPlant"><b>Q</b><span>Sentinel</span><div class="cd"></div></div>
+      <div class="ks" id="kStep"><b>F</b><span>Step through</span><div class="cd"></div></div>
+    </div>
+  </div>
+  <div id="markers"></div>
   <div id="fps"></div>
   <div id="netNote"></div>
 </section>
