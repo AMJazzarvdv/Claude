@@ -1,0 +1,54 @@
+# Builds the desktop app for Windows, macOS and Linux.
+# Run it by hand (Actions → Desktop builds → Run workflow) or push a tag like v1.0.0,
+# which also attaches the builds to a GitHub release.
+name: Desktop builds
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build the game
+        working-directory: web
+        env:
+          # the online server's address (Settings → Variables), stamped into the build when set
+          HOLLOWMOOR_SERVER: ${{ vars.HOLLOWMOOR_SERVER }}
+        run: |
+          npm ci
+          npm run build
+      - name: Package the desktop app
+        working-directory: web/desktop
+        run: |
+          npm ci
+          npm run dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hollowmoor-${{ matrix.os }}
+          if-no-files-found: error
+          path: |
+            web/desktop/out/*.exe
+            web/desktop/out/*.zip
+            web/desktop/out/*.AppImage
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            web/desktop/out/*.exe
+            web/desktop/out/*.zip
+            web/desktop/out/*.AppImage
