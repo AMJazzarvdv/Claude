@@ -24,7 +24,7 @@ function buildCrowModel(M) {
 
 export class Crows {
   constructor(G, perches) {
-    this.G = G; this.list = [];
+    this.G = G; this.list = []; this.auto = true; // auto: this machine decides what startles them (a guest is told by the host)
     for (const [pi, p] of perches.entries()) {
       const n = 1 + Math.floor(Math.random() * 3);
       for (let k = 0; k < n; k++) {
@@ -54,6 +54,7 @@ export class Crows {
       if (!cawed) { G.audio.cawAt(c.pos.clone()); cawed = true; }
     }
     if (bySurvivor) G.noise(from, 32, 'crows');
+    if (this.auto) G.net?.event('crow', perch, Math.round(from.x * 10) / 10, Math.round(from.z * 10) / 10);
   }
 
   update(dt) {
@@ -68,12 +69,12 @@ export class Crows {
         if (ud.head) { ud.head.rotation.y = Math.sin(c.t * 0.9 + c.home.x) * 0.7; ud.head.rotation.x = c.peck < 0.25 ? 0.9 : 0; }
         if (ud.wingL) { ud.wingL.rotation.z = 0; ud.wingR.rotation.z = 0; }
         // what startles it
-        for (const s of G.survivors) {
+        if (this.auto) for (const s of G.survivors) {
           if (!s.standing) continue;
           const d = flatDist(s.pos, c.pos);
           if ((d < 4.5 && s.speed > 2.6) || d < 1.6) { this.scare(c.perch, s.pos, true); break; }
         }
-        if (c.state === 'perch' && k && k.moving && flatDist(k.pos, c.pos) < 6) this.scare(c.perch, k.pos, false);
+        if (this.auto && c.state === 'perch' && k && k.moving && flatDist(k.pos, c.pos) < 6) this.scare(c.perch, k.pos, false);
       } else if (c.state === 'fly') {
         c.vel.y = Math.max(1.4, c.vel.y - dt * 1.5);
         c.pos.addScaledVector(c.vel, dt);

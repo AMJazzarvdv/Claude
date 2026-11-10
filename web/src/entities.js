@@ -132,6 +132,14 @@ export class Pallet {
     this.angle += (this.target - this.angle) * Math.min(1, dt * 16);
     this.model.userData.pivot.rotation.x = this.angle;
   }
+  // A guest learns the pallet's state from the host: show it and make it solid (sounds and splinters arrive on their own).
+  setNet(state) {
+    if (state === this.state) return;
+    const W = this.G.world;
+    if (state === 'down') { this.target = 1.13; if (!W.dynBoxes.includes(this.box)) W.dynBoxes.push(this.box); }
+    if (state === 'broken') { const i = W.dynBoxes.indexOf(this.box); if (i >= 0) W.dynBoxes.splice(i, 1); W.root.remove(this.model); }
+    this.state = state;
+  }
 }
 
 // ================================================================ Weeping Post

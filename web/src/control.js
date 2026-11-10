@@ -215,13 +215,13 @@ export const SurvivorControl = {
 
   actionPrompt(s, a, inp) {
     let prog = null, heal = false, name = ACTION_NAMES[a.type] || '';
-    if (a.type === 'ring') prog = a.bell.progress;
-    else if (a.type === 'heal') { prog = a.target.healProg; heal = true; name = a.target.health === 'downed' ? 'Reviving' : 'Healing'; }
+    if (a.type === 'ring') prog = a.bell ? a.bell.progress : null;
+    else if (a.type === 'heal') { prog = a.target ? a.target.healProg : null; heal = true; name = a.target?.health === 'downed' ? 'Reviving' : 'Healing'; }
     else if (a.type === 'bandage') { prog = Math.max(s.healProg, a.t / 6); heal = true; }
     else if (a.type === 'selfheal') { prog = s.healProg; heal = true; }
-    else if (a.type === 'search') prog = a.chest.progress;
+    else if (a.type === 'search') prog = a.chest ? a.chest.progress : null;
     else if (a.type === 'unhook') prog = a.t / 1.2;
-    else if (a.type === 'gate') prog = a.gate.progress;
+    else if (a.type === 'gate') prog = a.gate ? a.gate.progress : null;
     else if (a.type === 'shroud') prog = a.t / 2.2;
     inp.promptText = name; inp.promptProg = prog; inp.promptHeal = heal;
   },
@@ -268,6 +268,47 @@ export const SurvivorControl = {
         }
       }
     }
+  },
+
+  // A guest steering its own survivor: it moves itself at once (the host checks the
+  // result) and works out its own prompts; everything else waits for the host's word.
+  clientControl(s, dt, inp) {
+    const own = this.net.own;
+    const fwd = V(Math.sin(inp.camYaw), 0, Math.cos(inp.camYaw));
+    const dir = inp.moveDir(V());
+    const moving = dir.lengthSq() > 0;
+    s.lookPitch = clamp(-inp.camPitch, -0.6, 0.6);
+    s.lookYaw = clamp(angDiff(s.yaw, inp.camYaw), -1.1, 1.1);
+    inp.promptText = ''; inp.promptProg = null; inp.promptHeal = false;
+    inp.lockT = Math.max(0, inp.lockT - dt);
+    // ease onto the spot the host insists on
+    if (own.corr.lengthSq() > 1e-6) { const k = Math.min(1, dt * 14); s.pos.addScaledVector(own.corr, k); own.corr.multiplyScalar(1 - k); }
+    const canMove = own.free && inp.lockT <= 0;
+    if (s.health === 'hooked') {
+      s.speed = 0;
+      if (s.hookPhase === 1) { inp.promptText = s.escapeAttempts > 0 ? `Bound. Wait for help, or <kbd>Space</kbd> try to tear free (${s.escapeAttempts} left)` : 'Bound. Wait for help.'; inp.promptProg = s.hookTimer / 55; }
+      else { inp.promptText = 'Struggle! Hit the toll checks or the moor takes you'; inp.promptProg = s.hookTimer / 50; }
+      return;
+    }
+    if (s.canonizing) { inp.promptText = 'The stone is creeping up your body…'; inp.promptProg = s.stone || 0; return; }
+    if (s.health === 'downed') {
+      if (canMove) { s.crouch = false; if (moving) s.moveTo(dir, 0.7, dt); else s.speed = 0; }
+      inp.promptText = s.nHeal ? 'Someone is helping you up…' : 'You are dying. Crawl to safety.';
+      inp.promptProg = s.nHeal ? s.healProg : null; inp.promptHeal = true;
+      return;
+    }
+    if (!s.standing) return;
+    const a = s.action;
+    if (a && !(moving && a.type !== 'drop' && a.type !== 'hatch')) { s.speed = 0; this.actionPrompt(s, a, inp); return; }
+    const cand = this.interactions(s, fwd, inp);
+    // a vault or a pallet drop roots you for a moment: stop predicting until the host has taken over
+    if (inp.pressed.has('Space') && cand.space) inp.lockT = cand.space.lock;
+    inp.promptText = this.promptLine(s, cand);
+    if (!canMove) return;
+    s.crouch = inp.keys.has('KeyC') || inp.keys.has('ControlLeft') || inp.keys.has('ControlRight');
+    const { sp, back } = this.moveSpeed(s, inp, dir, fwd);
+    s.backpedal = back && moving;
+    if (moving) s.moveTo(dir, sp, dt, true, back ? inp.camYaw : null); else s.speed = 0;
   },
 
   // carried: wiggle with alternating A / D

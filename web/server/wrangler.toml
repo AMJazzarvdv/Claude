@@ -1,0 +1,22 @@
+# Deploy with:  npx wrangler deploy   (from web/server, after `npm run build` in web/)
+name = "hollowmoor"
+main = "src/worker.js"
+compatibility_date = "2025-06-01"
+
+# The game's own files: the same Worker serves the web build and the rooms.
+[assets]
+directory = "../dist"
+binding = "ASSETS"
+
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "Room"
+
+[[durable_objects.bindings]]
+name = "REGISTRY"
+class_name = "Registry"
+
+# SQLite-backed Durable Objects are available on the Workers free plan.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room", "Registry"]

@@ -15,6 +15,8 @@ import { Bell, Pallet, Post, Gate, Hatch, Survivor, V, angDiff, yawTo, flatDist 
 import { Killer, Sentinel, Memorial, TIER_NAMES } from './killer.js';
 import { Chest, ItemReveal, ITEMS, ITEM_ICONS, HOLD, buildItemModel } from './items.js';
 import { Input, SurvivorControl, makeView } from './control.js';
+import { Net } from './net.js';
+import { KillerControl } from './killerplay.js';
 import { Crows } from './crows.js';
 import { Weather } from './weather.js';
 import { Ambient } from './ambient.js';
@@ -154,7 +156,8 @@ addEventListener('keydown', (e) => {
   keys.add(e.code);
   if (game?.state === 'intro' && ['Space', 'Escape', 'Enter'].includes(e.code)) { e.preventDefault(); game.endIntro(); return; }
   if (e.code === 'Escape' && game) {
-    if (game.state === 'playing' && (noLock || !document.pointerLockElement)) game.pause();
+    if (game.menu && noLock) game.resume();
+    else if (game.state === 'playing' && (noLock || !document.pointerLockElement)) game.pause();
     else if (game.state === 'paused' && noLock) game.resume();
   }
 });
@@ -168,7 +171,7 @@ canvas.addEventListener('mousedown', (e) => {
   if (e.button === 0) { localInput.mouseDown = true; pressed.add('Mouse0'); }
   if (e.button === 2) { localInput.rightDown = true; pressed.add('Mouse2'); }
   if (game?.state === 'intro') game.endIntro();
-  if (game?.state === 'playing' && !document.pointerLockElement && !noLock) lock();
+  if (game?.state === 'playing' && !game.menu && !document.pointerLockElement && !noLock) lock();
 });
 addEventListener('mouseup', (e) => { if (e.button === 0) localInput.mouseDown = false; if (e.button === 2) localInput.rightDown = false; });
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -182,7 +185,7 @@ function lock() {
 }
 document.addEventListener('pointerlockchange', () => {
   if (!game) return;
-  if (document.pointerLockElement === canvas) { if (game.state === 'paused') game.resume(true); ui.show('clickPlay', false); }
+  if (document.pointerLockElement === canvas) { if (game.paused) game.resume(true); ui.show('clickPlay', false); }
   else if ((game.state === 'playing' || game.state === 'intro') && !noLock) { game.endIntro(); game.pause(); }
 });
 document.addEventListener('pointerlockerror', () => { noLock = true; });
@@ -259,7 +262,11 @@ class Game {
     audio.rain(0);
     if (this.world) { this.world.dispose(); if (this.world.sky) scene.remove(this.world.sky); }
     this.survivors = []; this.killer = null; this.sentinels = []; this.hatch = null;
-    this.memorials = []; this.chests = []; this.projectiles = []; this.candle = null; this.crows = null;
+    if (this.netFlasks) { for (const f of this.netFlasks.values()) scene.remove(f.model); this.netFlasks = null; }
+    for (const e of this.effects) e.finish?.();
+    this.memorials = []; this.chests = []; this.projectiles = []; this.effects = []; this.candle = null; this.crows = null;
+    this.spectate = null; this.menu = false; this.seeT = 0;
+    document.body.classList.remove('as-killer');
     $('mirrorFrame').hidden = true;
     this.fx.clear();
   }
@@ -464,11 +471,17 @@ class Game {
     grade.uniforms.uFade.value = clamp(1 - this.introT / 1.2, 0, 1) + clamp((this.introT - (this.introDur - 0.4)) / 0.4, 0, 1);
     grade.uniforms.uBlink.value = 0; grade.uniforms.uLow.value = 0; grade.uniforms.uHurt.value = 0; grade.uniforms.uLament.value = 0; grade.uniforms.uHit.value = 0; grade.uniforms.uWarn.value = 0;
     audio.update(dt, { listener: camera.position, chase: 0, breath: 0, lament: 0 });
+    // online, the opening holds on its last shot until everyone has arrived
+    const waiting = this.net && this.mode !== 'solo' && !this.net.readyToBegin();
+    if (waiting) this.introT = Math.min(this.introT, this.introDur - 0.5);
+    $('introWait').hidden = !(waiting && this.introT > this.introDur - 1.2);
     if (this.introT >= this.introDur) this.endIntro();
   }
 
   endIntro() {
     if (this.state !== 'intro') return;
+    if (this.net && this.mode !== 'solo' && !this.net.readyToBegin()) return;
+    $('introWait').hidden = true;
     this.state = 'playing';
     ui.only('hud');
     this.fadeIn = 0; this.matchStart = performance.now() - 900;
@@ -481,13 +494,25 @@ class Game {
     this.net?.onIntroEnd();
   }
 
-  pause() { if (this.state !== 'playing') return; this.state = 'paused'; ui.only('hud', 'pause'); keys.clear(); localInput.mouseDown = false; audio.silenceGrind('killer'); }
+  pause() {
+    if (this.state !== 'playing' || this.menu) return;
+    keys.clear(); localInput.mouseDown = false; localInput.rightDown = false;
+    // an online vigil does not stop for one player's menu
+    if (this.mode !== 'solo') { this.menu = true; ui.only('hud', 'pause'); return; }
+    this.state = 'paused'; ui.only('hud', 'pause'); audio.silenceGrind('killer');
+  }
   resume(fromLock = false) {
+    if (this.menu) { this.menu = false; ui.only('hud'); if (!fromLock && !noLock) lock(); return; }
     if (this.state !== 'paused') return;
     this.state = 'playing'; ui.only('hud');
     if (!fromLock && !noLock) lock();
   }
-  abandon() { this.state = 'title'; this.disposeMatch(); this.world = null; document.exitPointerLock?.(); this.setupTitle(); }
+  get paused() { return this.state === 'paused' || !!this.menu; }
+  abandon() { this.leaveOnline(); this.toTitle(); }
+  toTitle() { this.state = 'title'; this.menu = false; this.disposeMatch(); this.world = null; document.exitPointerLock?.(); this.setupTitle(); }
+  leaveOnline() { if (this.net) { this.net.restore(); this.net.leave(); } this.net = null; this.mode = 'solo'; }
+  // after an online vigil: clear the moor and stand in the room again
+  backToLobby() { this.toTitle(); ui.only('lobby'); }
 
   // ---------------------------------------------------------------- shared services
   borrowLight(color, distance = 9, intensity = 2.6) {
@@ -516,6 +541,7 @@ class Game {
     this.effects.push(new ItemReveal(this, chest, s, id));
     this.net?.event('reveal', chest.id, this.survivors.indexOf(s), id);
   }
+  revealShow(chestId, si, id) { const c = this.chests[chestId], s = this.survivors[si]; if (c && s) this.effects.push(new ItemReveal(this, c, s, id)); }
   attachHeld(s) {
     if (s.heldModel) { s.heldModel.parent?.remove(s.heldModel); s.heldModel = null; }
     if (!s.item) return;
@@ -534,7 +560,7 @@ class Game {
     if (i < 0) return;
     this.sentinels.splice(i, 1);
     this.world.root.remove(target.model); this.world.root.remove(target.cloth);
-    this.fx.debris(target.pos); audio.shatter(target.pos.clone().setY(1.2));
+    this.fx.debris(target.pos); this.audio.shatter(target.pos.clone().setY(1.2));
     this.toast('A Sentinel shatters', 'good'); this.addScore(by, 'boldness', 600, 'Shattered a Sentinel');
   }
 
@@ -562,13 +588,13 @@ class Game {
       this.feel(s, 'toll');
     }
     this.fx.shockwave(k.pos, 24);
-    audio.tollRelease(head);
+    this.audio.tollRelease(head);
     this.noise(k.pos, 50, 'toll');
     this.toast('The Toll of Stone', 'bad');
   }
   onCanonizeStart(t) {
     this.toast(`It is turning ${t.name} to stone. Look at it to stop it!`, 'bad', 'survivor');
-    audio.choir(t.chest(), 3.2, 0.4, 0.04, 92.5);
+    this.audio.choir(t.chest(), 3.2, 0.4, 0.04, 92.5);
   }
   onLightning() {
     this.net?.event('lightning', this.weather.flashes);
@@ -625,7 +651,7 @@ class Game {
       this.gatesPowered = true;
       setTimeout(() => {
         this.toast('The Lychgates are unsealed', 'big');
-        audio.toll(null, 98, 0.9, 10); audio.toll(null, 147, 0.6, 9); audio.toll(null, 196, 0.5, 8);
+        this.audio.toll(null, 98, 0.9, 10); this.audio.toll(null, 147, 0.6, 9); this.audio.toll(null, 196, 0.5, 8);
       }, 1800);
       for (const b of this.bells) if (!b.done) { b.locked = true; for (const r of [...b.ringers]) r.cancelAction(); }
     }
@@ -760,6 +786,8 @@ class Game {
     mouseDX = mouseDY = 0;
     this.camPitch = clamp(this.camPitch, -1.25, this.role === 'killer' ? 1.2 : 0.95);
     localInput.camYaw = this.camYaw; localInput.camPitch = this.camPitch;
+    const pv = this.player?.view;
+    if (pv) { pv.yaw = this.camYaw; pv.pitch = this.camPitch; pv.aspect = camera.aspect; }
     if (this.role === 'killer') return this.killerCamera(dt, camera);
     // once your own fate is sealed you watch over someone else's shoulder
     if (this.spectate && !this.spectate.alive) this.nextSpectate();
@@ -866,6 +894,41 @@ class Game {
     for (const s of this.survivors) if (s.alive) this.addScore(s, 'survival', 2 * dt);
     this.present(dt);
     this.net?.hostPost(dt);
+  }
+
+  // A guest's frame: no rules run here. Everything is dressed from the host's snapshots,
+  // except this player's own movement, which is predicted so the controls stay crisp.
+  updateClient(dt) {
+    this.time += dt;
+    const k = this.killer, p = this.player, net = this.net;
+    if (pressed.has('Space')) { if (!ui.skill.press() && this.spectate) this.nextSpectate(); }
+    // The statue must never stir on this screen while this player is looking at it, even though
+    // the host hears of the look a moment late. If the host disagrees for long (what we see is
+    // an old image and the real one is elsewhere), let it go and leave an afterimage.
+    let held = false;
+    if (this.role === 'survivor' && p.alive) {
+      const sees = this.canSee(p, k.samplePoints());
+      this.seeT = sees ? (this.seeT || 0) + dt : 0;
+      held = sees && (p.watching || this.seeT < 0.4);
+      if (sees && !held && !this.phantom) { k.snapGhost(); k.ghostPending = false; k.ghost.visible = true; k.ghostT = 1.2; }
+      this.phantom = sees && !held;
+    }
+    net.clientPre(dt, held);
+    if (this.role === 'killer') this.clientKillerControl(k, dt, localInput);
+    else if (p.alive) this.clientControl(p, dt, localInput);
+    for (const s of this.survivors) { if (s.blinkT > 0) s.blinkT -= dt; if (s.alive) s.visual(dt); }
+    this.updateCamera(dt);
+    k.sync(dt);
+    for (const b of this.bells) b.visual(dt);
+    for (const pl of this.pallets) pl.update(dt);
+    for (const po of this.posts) po.update(dt);
+    for (const g of this.gates) g.visual(dt);
+    for (const st of this.sentinels) st.visual(dt);
+    for (const c of this.chests) c.update(dt);
+    if (this.candle) this.candle.update(dt);
+    this.crows?.update(dt);
+    this.present(dt);
+    net.clientPost(dt, localInput, camera);
   }
 
   // What this machine's player sees and hears: auras, the audio mix, the grade, the HUD.
@@ -1019,7 +1082,7 @@ class Game {
   }
 }
 const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-Object.assign(Game.prototype, SurvivorControl);
+Object.assign(Game.prototype, SurvivorControl, KillerControl);
 
 // ------------------------------------------------------------------ menus
 let chosen = 0;
@@ -1055,6 +1118,7 @@ document.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click'
   const go = b.dataset.go;
   backTo = game?.state === 'paused' ? 'pause' : 'title';
   if (go === 'select') buildSelect();
+  if (go === 'online') { $('playerName').value = settings.name || ''; $('serverUrl').value = settings.server || ''; if (net?.connected && net.lobby) { ui.only('lobby'); renderLobby(); return; } }
   if (game?.state === 'paused') ui.only('hud', go); else ui.only(go);
 }));
 document.querySelectorAll('[data-back]').forEach((b) => b.addEventListener('click', () => {
@@ -1077,10 +1141,140 @@ $('startBtn').addEventListener('click', () => {
   game.startMatch(soloConfig());
 });
 $('resumeBtn').addEventListener('click', () => game.resume());
-$('abandonBtn').addEventListener('click', () => game.abandon());
-$('againBtn').addEventListener('click', () => { lock(); game.startMatch(soloConfig()); });
-$('toTitleBtn').addEventListener('click', () => { game.disposeMatch(); game.world = null; game.setupTitle(); });
+$('abandonBtn').addEventListener('click', () => { const online = game.mode !== 'solo'; game.abandon(); if (online) ui.only('online'); });
+$('againBtn').addEventListener('click', () => {
+  if (game.mode === 'solo') { lock(); game.startMatch(soloConfig()); return; }
+  // online: back to the room (the host brings everyone; a guest waits there for the host)
+  if (net.isHost) net.toLobby();
+  game.backToLobby(); renderLobby();
+});
+$('toTitleBtn').addEventListener('click', () => { const online = game.mode !== 'solo'; game.leaveOnline(); game.toTitle(); if (online) ui.only('online'); });
 $('clickPlay').addEventListener('click', () => lock());
+
+// ------------------------------------------------------------------ online
+const serverMeta = document.querySelector('meta[name="hollowmoor-server"]')?.content || '';
+function serverUrl() {
+  const q = new URLSearchParams(location.search).get('server');
+  if (q) return q;
+  if (settings.server) return settings.server;
+  if (serverMeta) return serverMeta;
+  // served by the game's own server: rooms live at the same address
+  if (/^https?:$/.test(location.protocol) && !/claude|anthropic|^localhost$|^127\./.test(location.hostname)) return location.origin;
+  return '';
+}
+let net = null;
+const netStatus = (t, bad = false) => { const el = $('onlineStatus'); el.textContent = t || ''; el.classList.toggle('bad', bad); };
+const myName = () => { const n = ($('playerName').value || '').trim().slice(0, 18) || 'Mourner'; settings.name = n; saveSettings(); return n; };
+const onScreen = (id) => $(id).classList.contains('on');
+
+function openNet() {
+  if (net) return net;
+  net = new Net(game, {
+    lobby: (L, returned) => {
+      if (returned && game.state !== 'title') game.backToLobby();
+      else if (!net.inMatch && onScreen('online')) ui.only('lobby');
+      renderLobby();
+    },
+    start: (cfg) => { if (net.isHost) lock(); game.net = net; game.startMatch(cfg); },
+    closed: (reason) => {
+      net.restore(); game.net = null; game.mode = 'solo';
+      if (game.state !== 'title') game.toTitle();
+      ui.only('online');
+      netStatus(reason === 'host' ? 'The host left, so the room has closed.' : 'The connection to the room was lost.', true);
+    },
+  });
+  window.__net = net; // used by the headless tests
+  return net;
+}
+
+async function enterRoom(kind) {
+  audio.init(); audio.setVolume(settings.vol);
+  const server = ($('serverUrl').value || '').trim() || serverUrl();
+  if (!server) { netStatus('No game server is set up for this copy. Open “Server address” and enter one.', true); return; }
+  const fromField = ($('serverUrl').value || '').trim();
+  if (fromField !== (settings.server || '')) { settings.server = fromField; saveSettings(); }
+  const name = myName();
+  let code = ($('roomCode').value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (kind === 'join' && code.length < 4) { netStatus('Enter the room code your host gave you.', true); return; }
+  netStatus(kind === 'join' ? 'Joining…' : kind === 'quick' ? 'Looking for a vigil…' : 'Opening a room…');
+  for (const b of ['createRoomBtn', 'quickBtn', 'joinBtn']) $(b).disabled = true;
+  try {
+    const n = openNet();
+    if (kind !== 'join') code = await Net.newCode(server, kind === 'quick');
+    const hello = await n.connect(server, code, name);
+    game.net = null; // set when a vigil starts
+    n.setPerks(chosenPerks.slice());
+    if (kind === 'quick' && hello.host) n.setPublic(true);
+    netStatus('');
+    if (hello.host) { ui.only('lobby'); renderLobby(); }
+  } catch (e) {
+    netStatus(e.message || 'Could not reach the server', true);
+  } finally {
+    for (const b of ['createRoomBtn', 'quickBtn', 'joinBtn']) $(b).disabled = false;
+  }
+}
+$('createRoomBtn').addEventListener('click', () => enterRoom('create'));
+$('quickBtn').addEventListener('click', () => enterRoom('quick'));
+$('joinBtn').addEventListener('click', () => enterRoom('join'));
+$('roomCode').addEventListener('keydown', (e) => { if (e.code === 'Enter') enterRoom('join'); });
+$('leaveRoomBtn').addEventListener('click', () => { audio.uiClick(); if (net) { net.restore(); net.leave(); } game.net = null; game.mode = 'solo'; netStatus(''); ui.only('online'); });
+$('copyCode').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText(net.lobby.code); $('copyCode').textContent = 'Copied'; } catch { $('copyCode').textContent = net.lobby.code; }
+  setTimeout(() => { $('copyCode').textContent = 'Copy code'; }, 1600);
+});
+$('lobbyGo').addEventListener('click', () => {
+  audio.uiClick();
+  if (!net || !net.lobby) return;
+  if (net.isHost) {
+    const realm = Math.floor(Math.random() * REALMS.length);
+    net.start({ seed: Math.floor(Math.random() * 1e9), realm, rain: REALMS[realm].rain ?? Math.random() < 0.5 });
+  } else net.setReady(!net.lobby.players[net.id]?.ready);
+});
+$('lobbyPublic').addEventListener('change', () => net?.setPublic($('lobbyPublic').checked));
+
+function renderLobby() {
+  const L = net?.lobby; if (!L) return;
+  const host = net.isHost, mySeat = L.seats.indexOf(net.id), me = L.players[net.id];
+  $('lobbyCode').textContent = L.code;
+  $('seats').innerHTML = [0, 1, 2, 3, 4].map((i) => {
+    const peer = L.seats[i], pl = peer && L.players[peer], mine = peer === net.id, d = SURVIVORS[i];
+    const head = i < 4 ? portrait(d, 46) : '<div class="kport"></div>';
+    const title = i < 4 ? `<b>${d.name}</b><div class="role">${d.title}</div>` : '<b>The Reliquary</b><div class="role">The stone that hunts</div>';
+    const tag = !pl ? '' : peer === net.hostId ? ' · host' : pl.ready ? ' · <span class="rdy">ready</span>' : '';
+    const who = pl ? `<div class="who">${esc(pl.name)}${mine ? ' (you)' : ''}${tag}</div>` : '<div class="who bot">Open · played by the game</div>';
+    return `<button type="button" class="seat ${i === 4 ? 'killer' : ''} ${mine ? 'mine' : ''} ${peer ? 'taken' : ''}" data-seat="${i}" ${peer && !mine ? 'disabled' : ''}>${head}<div>${title}${who}</div></button>`;
+  }).join('');
+  $('seats').querySelectorAll('.seat').forEach((b) => b.onclick = () => { audio.uiClick(); net.takeSeat(Number(b.dataset.seat)); });
+  // perks matter only for a Mourner
+  $('lobbyPerkBox').style.display = mySeat === 4 ? 'none' : '';
+  const pc = $('lobbyPerks');
+  pc.innerHTML = PERKS.map((p) => `<div class="perk ${chosenPerks.includes(p.id) ? 'sel' : ''}" data-id="${p.id}"><div class="d">${p.icon}</div><div><b>${p.name}</b><span>${p.desc}</span></div></div>`).join('');
+  pc.querySelectorAll('.perk').forEach((c) => c.onclick = () => {
+    const id = c.dataset.id;
+    if (chosenPerks.includes(id)) chosenPerks = chosenPerks.filter((x) => x !== id);
+    else if (chosenPerks.length < 4) chosenPerks.push(id);
+    try { localStorage.setItem('hollowmoor.loadout', JSON.stringify({ c: chosen, p: chosenPerks })); } catch { /* ignore */ }
+    audio.uiClick(); net.setPerks(chosenPerks.slice()); renderLobby();
+  });
+  $('lobbyPerkCount').textContent = `${chosenPerks.length} / 4`;
+  const dc = $('lobbyDiffs');
+  dc.innerHTML = Object.values(DIFFS).map((d) => `<button type="button" class="diff ${L.diff === d.id ? 'sel' : ''}" data-d="${d.id}" ${host ? '' : 'disabled'}><b>${d.name}</b><span>${d.desc}</span></button>`).join('');
+  dc.querySelectorAll('.diff').forEach((b) => b.onclick = () => { audio.uiClick(); net.setDiff(b.dataset.d); });
+  $('lobbyPublicRow').style.display = host ? '' : 'none';
+  $('lobbyPublic').checked = !!L.pub;
+  const go = $('lobbyGo'), st = $('lobbyStatus');
+  const others = Object.keys(L.players).filter((id) => id !== net.hostId);
+  if (host) {
+    go.textContent = 'Begin the Vigil'; go.disabled = !net.canStart();
+    const waiting = others.filter((id) => !L.players[id].ready).map((id) => L.players[id].name);
+    const unseated = Object.keys(L.players).filter((id) => !L.seats.includes(id)).map((id) => L.players[id].name);
+    st.textContent = net.inMatch ? 'A vigil is under way.' : unseated.length ? `${unseated.join(', ')} still needs to pick a place.` : waiting.length ? `Waiting for ${waiting.join(', ')} to be ready.` : others.length ? 'Everyone is ready.' : 'You can begin alone, or wait for others to join with the code.';
+  } else {
+    go.disabled = mySeat < 0 || net.inMatch;
+    go.textContent = me?.ready ? 'Not Ready' : 'Ready';
+    st.textContent = net.inMatch ? 'The host is still on the moor. They will return to the room.' : mySeat < 0 ? 'Pick a place to play.' : me?.ready ? 'Waiting for the host to begin.' : 'Press Ready when you are.';
+  }
+}
 
 // settings bindings
 const sens = $('sens'), vol = $('vol'), q = $('quality'), inv = $('invert'), fpsBox = $('showFps');
@@ -1092,7 +1286,20 @@ inv.onchange = () => { settings.invert = inv.checked; saveSettings(); };
 fpsBox.onchange = () => { settings.showFps = fpsBox.checked; saveSettings(); $('fps').style.display = settings.showFps ? 'block' : 'none'; };
 
 // ------------------------------------------------------------------ boot
-let last = performance.now(), fpsAcc = 0, fpsN = 0;
+let last = performance.now(), fpsAcc = 0, fpsN = 0, lastStep = last;
+// A host whose window is hidden still has to run the vigil for its guests. Browsers stop
+// drawing hidden pages, so a worker's clock steps the rules (without drawing) meanwhile.
+try {
+  const w = new Worker(URL.createObjectURL(new Blob(['setInterval(() => postMessage(0), 33)'], { type: 'text/javascript' })));
+  w.onmessage = () => {
+    if (!game || game.mode !== 'host' || game.state !== 'playing') return;
+    const now = performance.now();
+    if (now - lastStep < 120) return; // frames are being drawn: nothing to do
+    let dt = Math.min(0.25, (now - lastStep) / 1000); lastStep = now; last = now;
+    keys.clear(); pressed.clear();
+    while (dt > 0) { const s = Math.min(dt, 1 / 30); game.update(s); dt -= s; }
+  };
+} catch { /* no workers here: a hidden host simply pauses */ }
 function frame(now) {
   requestAnimationFrame(frame);
   let dt = Math.min(0.05, (now - last) / 1000); last = now;
@@ -1100,14 +1307,21 @@ function frame(now) {
   if (!game) return;
   fpsAcc += dt; fpsN++;
   if (fpsAcc > 0.5) { $('fps').textContent = `${Math.round(fpsN / fpsAcc)} fps`; fpsAcc = 0; fpsN = 0; }
+  if (game.menu) { keys.clear(); pressed.clear(); mouseDX = mouseDY = 0; localInput.mouseDown = false; localInput.rightDown = false; }
+  const wantClick = game.state === 'playing' && game.mode !== 'solo' && !game.menu && !noLock && !document.pointerLockElement;
+  if ($('clickPlay').classList.contains('on') !== wantClick && (wantClick || game.mode !== 'solo')) ui.show('clickPlay', wantClick);
+  $('netNote').textContent = game.mode === 'solo' || game.state !== 'playing' ? '' : game.mode === 'host' ? `Hosting · room ${net?.code || ''}` : `Room ${net?.code || ''}`;
   if (game.state === 'playing') {
-    while (dt > 0) { const s = Math.min(dt, 1 / 30); game.update(s); dt -= s; pressed.clear(); }
+    if (game.mode === 'client') game.updateClient(dt);
+    else while (dt > 0) { const s = Math.min(dt, 1 / 30); game.update(s); dt -= s; pressed.clear(); }
   } else if (game.state === 'title') game.updateTitle(dt);
   else if (game.state === 'intro') game.updateIntro(dt);
   else if (game.state === 'paused' || game.state === 'ended') { /* frozen */ }
   pressed.clear();
   if (game.state !== 'paused') game.updateAmbient(dt0);
+  lastStep = now;
   grade.uniforms.uTime.value = performance.now() / 1000;
+  if (window.__noRender) return; // headless tests of the rules do not need pictures
   composer.render();
   renderMirror();
 }

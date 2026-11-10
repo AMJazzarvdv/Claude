@@ -1,6 +1,7 @@
 // DOM-side UI: perk data + icons, survivor portraits, the toll-check
 // widget, HUD rendering, toasts and the results screen.
 const $ = (id) => document.getElementById(id);
+const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 const ICON = (body) => `<svg viewBox="0 0 32 32" fill="none" stroke="#e8c88a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
 export const PERKS = [
@@ -106,7 +107,7 @@ export class UI {
     this.rows = survivors.map((s) => {
       const r = document.createElement('div');
       r.className = 'srow';
-      r.innerHTML = `<div class="pt">${portrait(s.def)}<div class="ring"></div></div><div><div class="nm">${s.def.short}${s.isPlayer ? ' (you)' : ''}</div><div class="st"></div><div class="pips"><i></i><i></i></div><div class="hb" style="display:none"><i></i></div></div>`;
+      r.innerHTML = `<div class="pt">${portrait(s.def)}<div class="ring"></div></div><div><div class="nm">${s.playerName && !s.isPlayer ? esc(s.playerName) : s.def.short}${s.isPlayer ? ' (you)' : ''}</div><div class="st"></div><div class="pips"><i></i><i></i></div><div class="hb" style="display:none"><i></i></div></div>`;
       this.statusEl.appendChild(r);
       return { r, st: r.querySelector('.st'), pips: r.querySelectorAll('.pips i'), hb: r.querySelector('.hb'), hbi: r.querySelector('.hb i'), pt: r.querySelector('.pt'), last: '' };
     });

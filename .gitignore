@@ -7,3 +7,5 @@ DerivedDataCache/
 web/node_modules
 web/dist/_*
 web/preview/
+web/server/node_modules
+web/server/.wrangler

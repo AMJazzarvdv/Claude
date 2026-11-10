@@ -34,6 +34,7 @@ export class Sentinel {
     G.world.root.add(this.model); G.world.root.add(this.cloth);
     this.circle = { x: 0, z: 0, r: 0.45 };
     this.shroud = 0; this.lookT = Math.random() * 0.25; this.fx = { time: 0, glow: 0, relic: 0, wings: 0.4, halo: 0 };
+    this.lookYaw = 0; this.lookPitch = 0;
     this.moveTo(this.pos, yaw, pose);
   }
   moveTo(p, yaw, pose) {
@@ -44,7 +45,9 @@ export class Sentinel {
     this.circle.x = p.x; this.circle.z = p.z;
   }
   setShroud(t) { this.shroud = t; this.cloth.visible = true; this.G.audio.vault(this.pos.clone().setY(1.5), false); }
-  update(dt) {
+  look(y, p) { this.lookYaw = y; this.lookPitch = p; setLook(this.model, y, p); }
+  update(dt) { this.tick(dt); this.visual(dt); }
+  tick(dt) {
     const G = this.G;
     if (this.shroud > 0) { this.shroud -= dt; if (this.shroud <= 0) this.cloth.visible = false; }
     // the decoys turn their heads toward you too, but only while nobody is looking
@@ -53,10 +56,13 @@ export class Sentinel {
       this.lookT = 0.25;
       if (!G.isWatched(this.samplePoints())) {
         const s = nearestSurvivor(G, this.pos, 12);
-        if (s) setLook(this.model, angDiff(this.yaw, yawTo(this.pos, s.pos)), Math.atan2(s.eye().y - 2.3, Math.max(0.5, flatDist(s.pos, this.pos))));
-        else setLook(this.model, 0, 0);
+        if (s) this.look(angDiff(this.yaw, yawTo(this.pos, s.pos)), Math.atan2(s.eye().y - 2.3, Math.max(0.5, flatDist(s.pos, this.pos))));
+        else this.look(0, 0);
       }
     }
+  }
+  visual(dt) {
+    const G = this.G;
     if (hasFX() && G.killer) { this.fx.time = G.time; this.fx.wings = G.killer.tier >= 3 ? 0.4 : 0; fxUpdate(this.model, this.fx); }
   }
   samplePoints() { return [V(this.pos.x, 1.95, this.pos.z), V(this.pos.x, 1.1, this.pos.z)]; }
@@ -103,6 +109,7 @@ export class Killer {
     this.cooldown = 0; this.stunT = 0; this.veilT = 0; this.carrying = null;
     this.transferCD = 25; this.plantCD = 20; this.moving = false; this.speed = 0;
     this.poseName = 'tilt'; this.variant = 0; this.heardT = -99; this.stuckT = 0; this.lastPos = V();
+    this.lookYaw = 0; this.lookPitch = 0; this.human = false; this.input = null; this.net = null; this.score = null; this.scoreLog = null;
     this.circle = { x: 0, z: 0, r: 0.45 };
     this._pts = [V(), V(), V(), V(), V(), V()];
     // ascension, Toll of Stone, visuals
@@ -121,15 +128,22 @@ export class Killer {
   ascend(tier) {
     const G = this.G;
     if (tier <= this.tier) return;
-    this.tier = tier;
-    setTier(this.model, tier);
-    for (const st of G.sentinels) setTier(st.model, tier);
-    this.glow = 1;
+    this.showTier(tier);
     G.audio.ascend(this.headPos());
     G.fx.dust(this.pos.clone().setY(1.6), 50);
     G.fx.shockwave(this.pos, 10, 0xffb070);
     G.onAscend(this, tier);
   }
+
+  // The look of a tier, on it and on every Sentinel (guests call this when they see the tier change).
+  showTier(tier) {
+    this.tier = tier;
+    setTier(this.model, tier);
+    for (const st of this.G.sentinels) setTier(st.model, tier);
+    this.glow = 1;
+  }
+  look(y, p) { this.lookYaw = y; this.lookPitch = p; setLook(this.model, y, p); }
+  setPose(name) { if (name !== this.poseName && RELIQUARY_POSES[name]) { this.poseName = name; poseReliquary(this.model, name); } }
 
   // The player's eyes are closing: remember where the stone stood.
   snapGhost() {
@@ -563,7 +577,7 @@ export class Killer {
     if (p !== this.poseName) { this.poseName = p; poseReliquary(this.model, p); }
     // its head always turns to the nearest survivor: whenever you look back, it is staring at you
     const s = nearestSurvivor(this.G, this.pos, 18);
-    if (s) setLook(this.model, angDiff(this.yaw, yawTo(this.pos, s.pos)), Math.atan2(s.eye().y - 2.3, Math.max(0.5, flatDist(s.pos, this.pos))));
+    if (s) this.look(angDiff(this.yaw, yawTo(this.pos, s.pos)), Math.atan2(s.eye().y - 2.3, Math.max(0.5, flatDist(s.pos, this.pos))));
   }
 
   // Presentation: runs on every machine from the (replicated) state.

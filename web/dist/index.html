@@ -199,6 +199,32 @@
   #touchNote { margin-top: 22px; max-width: 34ch; color: var(--ember); font-size: 14px; line-height: 1.5; }
   button.btn:focus-visible, .card:focus-visible, .perk:focus-visible { outline: 2px solid var(--ember); outline-offset: 3px; }
   @media (max-width: 640px) { .log { columns: 1; } #perkHud { display: none; } table.keys td { display: block; } button.btn { min-width: 220px; } }
+  /* online: room browser and lobby */
+  .field { display: flex; gap: 10px; align-items: center; margin: 12px 0; flex-wrap: wrap; }
+  .field label { min-width: 110px; color: var(--muted); font-size: 13px; letter-spacing: 0.06em; }
+  .field input[type=text] { flex: 1; min-width: 160px; background: rgba(0,0,0,0.45); border: 1px solid var(--line); color: var(--ink); padding: 10px 12px; font: inherit; font-size: 15px; }
+  .field input[type=text]:focus-visible { outline: 2px solid var(--ember); outline-offset: 2px; }
+  #roomCode { text-transform: uppercase; letter-spacing: 0.3em; font-family: Cinzel, serif; max-width: 220px; }
+  .netstatus { min-height: 22px; margin-top: 10px; color: var(--ember); font-size: 13.5px; }
+  .netstatus.bad { color: var(--blood-hi); }
+  .roomcode { font-family: Cinzel, serif; letter-spacing: 0.3em; color: var(--ember); margin-left: 8px; }
+  button.btn.small { min-width: 0; padding: 6px 12px; font-size: 11px; margin-left: 12px; vertical-align: middle; }
+  .seats { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+  .seat { border: 1px solid var(--line); background: rgba(255,255,255,0.02); padding: 12px; cursor: pointer; display: flex; gap: 12px; align-items: center; text-align: left; color: inherit; font: inherit; transition: border-color .2s, background .2s; }
+  .seat:hover { border-color: rgba(232,226,214,0.4); }
+  .seat.mine { border-color: var(--blood-hi); background: rgba(179,38,30,0.12); }
+  .seat.taken:not(.mine) { cursor: default; border-color: rgba(232,162,74,0.35); }
+  .seat.killer .who { color: var(--blood-hi); }
+  .seat b { display: block; font-size: 14px; }
+  .seat .role { color: var(--muted); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; }
+  .seat .who { color: var(--ember); font-size: 13px; margin-top: 4px; }
+  .seat .who.bot { color: var(--faint); font-style: italic; }
+  .seat .rdy { color: var(--ok, #7fb87f); font-size: 11px; letter-spacing: 0.1em; }
+  .kport { width: 46px; height: 46px; flex: 0 0 46px; border-radius: 50%; background: radial-gradient(circle at 50% 62%, #ff7a3a 0 9%, #5a2010 10% 16%, #1a1614 17%), #121214; border: 1px solid rgba(224,72,60,0.5); }
+  .results .kport { width: 42px; height: 42px; flex-basis: 42px; }
+  label.check { display: flex; gap: 10px; align-items: center; margin-top: 16px; color: var(--muted); font-size: 13.5px; cursor: pointer; }
+  #introWait { position: absolute; left: 50%; bottom: calc(11vh + 6px); transform: translateX(-50%); font-family: 'Cormorant Garamond', serif; font-style: italic; font-size: 18px; color: var(--ember); }
+  #netNote { position: absolute; top: 10px; right: 14px; font-size: 11px; letter-spacing: 0.14em; color: var(--muted); text-transform: uppercase; }
   @media (prefers-reduced-motion: reduce) { .toast, .srow.hooked .ring, #tierPips i.on, #itemSlot, .results > * { animation: none !important; } }
 </style>
 </head>
@@ -217,6 +243,7 @@
   <div class="rank" id="rankLine"></div>
   <div class="menu">
     <button class="btn" data-go="select">Begin Vigil</button>
+    <button class="btn" data-go="online">Play Online</button>
     <button class="btn ghost" data-go="howto">How to Survive</button>
     <button class="btn ghost" data-go="settings">Settings</button>
   </div>
@@ -237,6 +264,41 @@
       <button class="btn ghost" data-go="title">Back</button>
       <button class="btn" id="startBtn">Enter the Moor</button>
     </div>
+  </div>
+</section>
+
+<section id="online" class="screen panelwrap">
+  <div class="panel" style="max-width:660px">
+    <h2>Keep the Vigil Together</h2>
+    <p class="muted">Up to four Mourners, and one of you may play the Reliquary. Any place nobody takes is played by the game.</p>
+    <div class="field"><label for="playerName">Your name</label><input type="text" id="playerName" maxlength="18" autocomplete="off" spellcheck="false"></div>
+    <div class="actions" style="justify-content:flex-start;margin-top:14px">
+      <button class="btn" id="createRoomBtn">Create a Room</button>
+      <button class="btn ghost" id="quickBtn">Find a Vigil</button>
+    </div>
+    <div class="field" style="margin-top:22px"><label for="roomCode">Room code</label><input type="text" id="roomCode" maxlength="8" autocomplete="off" spellcheck="false" placeholder="ABCDE"><button class="btn ghost" id="joinBtn">Join Room</button></div>
+    <div id="onlineStatus" class="netstatus" role="status"></div>
+    <details style="margin-top:14px"><summary class="muted" style="cursor:pointer;font-size:12.5px">Server address</summary>
+      <div class="field"><label for="serverUrl">Server</label><input type="text" id="serverUrl" autocomplete="off" spellcheck="false" placeholder="https://your-worker.workers.dev"></div>
+    </details>
+    <div class="actions"><button class="btn ghost" data-go="title">Back</button></div>
+  </div>
+</section>
+
+<section id="lobby" class="screen panelwrap">
+  <div class="panel">
+    <h2>Room<span class="roomcode" id="lobbyCode"></span><button class="btn ghost small" id="copyCode">Copy code</button></h2>
+    <p class="muted" id="lobbyHint">Share the code with your friends. Pick a place; any place left open is played by the game.</p>
+    <div class="seats" id="seats"></div>
+    <div id="lobbyPerkBox">
+      <h3>Your perks <span class="count" id="lobbyPerkCount">0 / 4</span></h3>
+      <div class="perks" id="lobbyPerks"></div>
+    </div>
+    <h3>Difficulty</h3>
+    <div class="diffs" id="lobbyDiffs"></div>
+    <label class="check" id="lobbyPublicRow"><input type="checkbox" id="lobbyPublic"> Let strangers join through “Find a Vigil”</label>
+    <div id="lobbyStatus" class="netstatus" role="status"></div>
+    <div class="actions"><button class="btn ghost" id="leaveRoomBtn">Leave Room</button><button class="btn" id="lobbyGo">Begin the Vigil</button></div>
   </div>
 </section>
 
@@ -311,6 +373,7 @@
   <div class="bar-top"></div><div class="bar-bot"></div>
   <div class="introcard"><div class="realm" id="introRealm">The Sunken Nave</div><div class="meta" id="introDiff">Vigil</div><div class="line">Ring five bells. Do not look away.</div></div>
   <div class="skip"><kbd>Space</kbd> skip</div>
+  <div id="introWait" hidden>Waiting for the others to arrive…</div>
 </section>
 
 <section id="clickPlay" class="screen">
@@ -334,8 +397,10 @@
   <div id="status"></div>
   <div id="perkHud"></div>
   <div id="fps"></div>
+  <div id="netNote"></div>
 </section>
 
+<meta name="hollowmoor-server" content="">
 <script type="module" src="game.js"></script>
 </body>
 </html>

@@ -4,7 +4,7 @@ import * as THREE from 'three';
 
 export class Weather {
   constructor(G, scene, { rain = false } = {}) {
-    this.G = G; this.rain = rain;
+    this.G = G; this.rain = rain; this.auto = true; // a guest's lightning is called by the host
     this.flash = 0; this.next = 25 + Math.random() * 30; this.flashes = [];
     if (rain) {
       const n = G.quality === 'low' ? 1200 : 2600;
@@ -32,7 +32,7 @@ export class Weather {
   update(dt, cam) {
     const G = this.G;
     this.next -= dt;
-    if (this.next <= 0) { this.next = 30 + Math.random() * 45; this.strike(); }
+    if (this.auto && this.next <= 0) { this.next = 30 + Math.random() * 45; this.strike(); }
     if (this.flashes.length) {
       this.flashT += dt;
       let f = 0;
